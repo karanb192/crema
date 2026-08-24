@@ -84,7 +84,15 @@ final class AppModel: ObservableObject {
             pinnedUntil = nil
         }
 
-        let processes = scanner.snapshot()
+        var processes = scanner.snapshot()
+
+        // Resolve cwd only for processes an enabled agent rule matches; the
+        // rest never need it and resolving all of them each scan is wasteful.
+        let agentRules = rules.filter { $0.enabled && $0.kind == .whileAgentWorking }
+        for index in processes.indices where agentRules.contains(where: { $0.matches(processes[index]) }) {
+            processes[index].cwd = ProcessScanner.cwd(for: processes[index].pid)
+        }
+
         let working = detector.update(processes: processes, now: now) { [activity] proc in
             // Precise file signal for Claude Code sessions; other agents use CPU.
             guard let preset = AgentPresets.preset(for: proc), preset.id == "claude" else { return nil }

@@ -101,16 +101,19 @@ public struct ProcessScanner {
             ? task.pti_total_user &+ task.pti_total_system
             : 0
 
+        // cwd is left empty here and filled in lazily only for the few
+        // agent processes that need it, since resolving it for every process
+        // on every scan is wasteful.
         return ScannedProcess(
             pid: pid, ppid: ppid, name: name, path: path,
             cpuNanos: cpuNanos, startTime: startTime,
-            cwd: cwd(for: pid)
+            cwd: ""
         )
     }
 
-    /// Working directory via PROC_PIDVNODEPATHINFO. Works for the caller's own
+    /// Working directory via PROC_PIDVNODEPATHINFO. Works for same-user
     /// processes; returns "" when the OS declines (never a fabricated path).
-    static func cwd(for pid: pid_t) -> String {
+    public static func cwd(for pid: pid_t) -> String {
         var vpi = proc_vnodepathinfo()
         let size = Int32(MemoryLayout<proc_vnodepathinfo>.size)
         let ret = proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, &vpi, size)
