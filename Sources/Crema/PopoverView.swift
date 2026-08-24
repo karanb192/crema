@@ -11,7 +11,6 @@ struct PopoverView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-            Divider()
 
             if model.restNow {
                 restBanner
@@ -28,27 +27,26 @@ struct PopoverView: View {
     // MARK: - Sections
 
     private var header: some View {
-        HStack(spacing: 8) {
-            Circle()
-                .fill(model.decision.systemHold ? crema : Color.secondary.opacity(0.4))
-                .frame(width: 9, height: 9)
-            Text("Crema")
-                .font(.system(size: 14, weight: .bold, design: .rounded))
-            Spacer()
-            Text(model.decision.systemHold ? "awake" : "sleeps")
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
-        .overlay(alignment: .bottomLeading) {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(model.decision.systemHold ? crema : Color.secondary.opacity(0.4))
+                    .frame(width: 9, height: 9)
+                Text("Crema")
+                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                Spacer()
+                Text(model.decision.systemHold ? "awake" : "sleeps")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
             Text(model.headline)
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
-                .padding(.horizontal, 14)
-                .padding(.bottom, -6)
                 .fixedSize(horizontal: false, vertical: true)
         }
+        .padding(.horizontal, 14)
+        .padding(.top, 12)
+        .padding(.bottom, 10)
     }
 
     private var restBanner: some View {
