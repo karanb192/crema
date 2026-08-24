@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+      Crema needs no special entitlements. It holds power assertions (IOKit),
+      reads the process table (libproc), and reads transcript files under the
+      user's home; none of these require an entitlement. This empty dict signs
+      the app under the hardened runtime with no exceptions, which is what
+      notarization wants.
+    -->
+</dict>
+</plist>

@@ -31,7 +31,16 @@ None of them know the difference between an agent working and an agent waiting f
 
 ## Install
 
-Pre-release, building from source for now:
+Once the first signed release ships, via Homebrew:
+
+```bash
+brew install --cask karanb192/tap/crema
+```
+
+Builds are Developer ID signed and notarized, so the app opens first try with no
+Gatekeeper hoops. Apple Silicon only.
+
+Building from source meanwhile:
 
 ```bash
 git clone https://github.com/karanb192/crema.git
@@ -40,13 +49,6 @@ make run      # builds a release .app and launches it
 ```
 
 The cup appears in your menu bar. There is no Dock icon and no window; it is a background menu bar app.
-
-A signed, notarized build and a Homebrew cask are planned:
-
-```bash
-# coming soon
-brew install --cask crema
-```
 
 ## How it works
 

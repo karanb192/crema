@@ -3,8 +3,9 @@
 .swiftpm/
 Package.resolved
 
-# Built bundle
+# Built bundle and release artifacts
 Crema.app/
+Crema-*.zip
 
 # Xcode
 *.xcodeproj
