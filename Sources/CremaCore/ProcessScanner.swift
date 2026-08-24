@@ -27,6 +27,13 @@ public struct ScannedProcess: Equatable {
         self.cwd = cwd
     }
 
+    /// True when the executable lives inside a .app bundle. Installed CLI
+    /// agents never do, so this filters out GUI apps (Anthropic's Claude
+    /// desktop app and its "Claude Helper" processes) from agent matching.
+    public var isInAppBundle: Bool {
+        path.contains("/Contents/MacOS/") || path.contains(".app/")
+    }
+
     /// Lowercased path components plus the basename, for rule matching.
     public var tokens: Set<String> {
         var set = Set(path.split(separator: "/").map { $0.lowercased() })
@@ -59,17 +66,26 @@ public struct ProcessScanner {
     }
 
     static func allPIDs() -> [pid_t] {
+        let stride = MemoryLayout<pid_t>.stride
         let needed = proc_listpids(UInt32(PROC_ALL_PIDS), 0, nil, 0)
         guard needed > 0 else { return [] }
-        let capacity = Int(needed) / MemoryLayout<pid_t>.stride + 16
-        var pids = [pid_t](repeating: 0, count: capacity)
-        let written = proc_listpids(
-            UInt32(PROC_ALL_PIDS), 0,
-            &pids, Int32(capacity * MemoryLayout<pid_t>.stride)
-        )
-        guard written > 0 else { return [] }
-        let count = Int(written) / MemoryLayout<pid_t>.stride
-        return Array(pids.prefix(count))
+
+        // proc_listpids gives no "buffer was too small" signal: a completely
+        // full buffer is indistinguishable from an exact fit. So if the fill
+        // comes back full (processes appeared between the sizing and fill
+        // calls), grow and retry rather than silently truncating the table.
+        var capacity = Int(needed) / stride + 32
+        for _ in 0..<6 {
+            var pids = [pid_t](repeating: 0, count: capacity)
+            let written = proc_listpids(UInt32(PROC_ALL_PIDS), 0, &pids, Int32(capacity * stride))
+            guard written > 0 else { return [] }
+            let count = Int(written) / stride
+            if count < capacity {
+                return Array(pids.prefix(count))
+            }
+            capacity *= 2   // buffer was full; there may be more
+        }
+        return []
     }
 
     static func info(for pid: pid_t) -> ScannedProcess? {
