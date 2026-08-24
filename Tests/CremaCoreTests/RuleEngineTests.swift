@@ -3,9 +3,19 @@ import XCTest
 
 final class RuleEngineTests: XCTestCase {
 
-    private func proc(_ pid: pid_t, _ name: String, cwd: String = "") -> ScannedProcess {
-        ScannedProcess(pid: pid, ppid: 1, name: name, cpuNanos: 0,
+    private func proc(_ pid: pid_t, _ name: String, path: String = "", cwd: String = "") -> ScannedProcess {
+        ScannedProcess(pid: pid, ppid: 1, name: name, path: path, cpuNanos: 0,
                        startTime: Date(timeIntervalSince1970: 1000), cwd: cwd)
+    }
+
+    /// The Claude Code case: basename is a version number, but the path has a
+    /// "claude" component, so the agent rule must still match it.
+    func testVersionDirLauncherMatchesByPath() {
+        let engine = RuleEngine()
+        let claude = proc(501, "2.1.241",
+                          path: "/Users/k/.local/share/claude/versions/2.1.241")
+        let result = engine.evaluate(rules: Rule.defaults(), processes: [claude], workingPIDs: [501])
+        XCTAssertTrue(result.agentHolds.contains("Claude Code (1 working)"))
     }
 
     func testAgentWorkingProducesHoldWithCount() {

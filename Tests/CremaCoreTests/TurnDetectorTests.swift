@@ -6,7 +6,7 @@ final class TurnDetectorTests: XCTestCase {
     private let start = Date(timeIntervalSince1970: 2000)
 
     private func proc(pid: pid_t, cpuNanos: UInt64) -> ScannedProcess {
-        ScannedProcess(pid: pid, ppid: 1, name: "claude",
+        ScannedProcess(pid: pid, ppid: 1, name: "claude", path: "/usr/bin/claude",
                        cpuNanos: cpuNanos, startTime: start, cwd: "")
     }
 

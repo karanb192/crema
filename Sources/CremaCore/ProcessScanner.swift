@@ -2,13 +2,45 @@ import Foundation
 import Darwin
 
 /// One process as seen by the scanner.
+///
+/// `name` is the executable basename, which for launchers like Claude Code is a
+/// version number (".../share/claude/versions/2.1.241"), not "claude". So
+/// matching goes through `tokens`, the set of path components plus the name,
+/// where "claude" does appear.
 public struct ScannedProcess: Equatable {
     public let pid: pid_t
     public let ppid: pid_t
-    public let name: String        // executable basename, e.g. "claude"
+    public let name: String        // executable basename
+    public let path: String        // full executable path
     public let cpuNanos: UInt64     // cumulative CPU time (user + system), nanoseconds
     public let startTime: Date      // process start
     public var cwd: String          // best-effort working directory, "" if unavailable
+
+    public init(pid: pid_t, ppid: pid_t, name: String, path: String = "",
+                cpuNanos: UInt64, startTime: Date, cwd: String) {
+        self.pid = pid
+        self.ppid = ppid
+        self.name = name
+        self.path = path
+        self.cpuNanos = cpuNanos
+        self.startTime = startTime
+        self.cwd = cwd
+    }
+
+    /// Lowercased path components plus the basename, for rule matching.
+    public var tokens: Set<String> {
+        var set = Set(path.split(separator: "/").map { $0.lowercased() })
+        set.insert(name.lowercased())
+        return set
+    }
+
+    /// True when `pattern` names this process: an exact token (a path
+    /// component or the basename), or a substring of the basename.
+    public func matches(pattern: String) -> Bool {
+        let needle = pattern.lowercased()
+        if name.lowercased().contains(needle) { return true }
+        return tokens.contains(needle)
+    }
 }
 
 /// Reads the live process table with libproc. Same-user processes only need
@@ -70,7 +102,7 @@ public struct ProcessScanner {
             : 0
 
         return ScannedProcess(
-            pid: pid, ppid: ppid, name: name,
+            pid: pid, ppid: ppid, name: name, path: path,
             cpuNanos: cpuNanos, startTime: startTime,
             cwd: cwd(for: pid)
         )

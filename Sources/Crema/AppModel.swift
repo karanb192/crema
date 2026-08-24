@@ -86,7 +86,9 @@ final class AppModel: ObservableObject {
 
         let processes = scanner.snapshot()
         let working = detector.update(processes: processes, now: now) { [activity] proc in
-            activity.lastWrite(processName: proc.name, cwd: proc.cwd)
+            // Precise file signal for Claude Code sessions; other agents use CPU.
+            guard let preset = AgentPresets.preset(for: proc), preset.id == "claude" else { return nil }
+            return activity.lastClaudeWrite(cwd: proc.cwd)
         }
         let result = engine.evaluate(rules: rules, processes: processes, workingPIDs: working)
 

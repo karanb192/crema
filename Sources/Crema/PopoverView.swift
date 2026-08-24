@@ -68,7 +68,7 @@ struct PopoverView: View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(model.rules) { rule in
                 ruleRow(rule)
-                ForEach(model.sessions.filter { $0.processName == rule.pattern }) { session in
+                ForEach(model.sessions.filter { $0.ruleID == rule.id }) { session in
                     sessionRow(session)
                 }
             }
@@ -156,7 +156,7 @@ struct PopoverView: View {
     private func ruleSubtitle(_ rule: Rule) -> String {
         switch rule.kind {
         case .whileAgentWorking:
-            let n = model.sessions.filter { $0.processName == rule.pattern }.count
+            let n = model.sessions.filter { $0.ruleID == rule.id }.count
             return n == 0 ? "no sessions running" : "\(n) session\(n == 1 ? "" : "s") · holds while working"
         case .whileProcessRuns:
             return "holds while it runs"

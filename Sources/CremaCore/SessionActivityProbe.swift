@@ -16,11 +16,11 @@ public struct SessionActivityProbe {
         self.projectsRoot = projectsRoot
     }
 
-    /// Last transcript write for this process, or nil if we have no file signal
-    /// for it. `cwd` comes from the process scanner.
-    public func lastWrite(processName: String, cwd: String) -> Date? {
-        guard processName == "claude", !cwd.isEmpty else { return nil }
-        // Claude encodes the project path by replacing every "/" with "-".
+    /// Last transcript write for a Claude Code session with this working
+    /// directory, or nil if none is found. `cwd` comes from the process scanner.
+    /// Claude encodes the project path by replacing every "/" with "-".
+    public func lastClaudeWrite(cwd: String) -> Date? {
+        guard !cwd.isEmpty else { return nil }
         let encoded = cwd.replacingOccurrences(of: "/", with: "-")
         let dir = projectsRoot + "/" + encoded
         return newestModification(inDirectory: dir, suffix: ".jsonl")

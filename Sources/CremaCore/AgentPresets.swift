@@ -31,9 +31,15 @@ public enum AgentPresets {
         AgentPreset(id: "opencode", displayName: "opencode",   processName: "opencode", sessionDir: "~/.local/share/opencode", tier: 1),
     ]
 
-    /// Fast lookup by process name.
+    /// Fast lookup by exact process name.
     public static func preset(forProcess name: String) -> AgentPreset? {
         tier1.first { $0.processName == name }
+    }
+
+    /// Lookup by matching a scanned process against each preset's process name,
+    /// path-aware so version-dir launchers like Claude Code still resolve.
+    public static func preset(for process: ScannedProcess) -> AgentPreset? {
+        tier1.first { process.matches(pattern: $0.processName) }
     }
 
     public static let allProcessNames: Set<String> = Set(tier1.map(\.processName))

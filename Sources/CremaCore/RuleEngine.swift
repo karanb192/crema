@@ -21,7 +21,7 @@ public struct RuleEngine {
         var workingCount = 0
 
         for rule in rules where rule.enabled {
-            let matched = processes.filter { rule.matches(processName: $0.name) }
+            let matched = processes.filter { rule.matches($0) }
             guard !matched.isEmpty else { continue }
 
             switch rule.kind {
@@ -51,12 +51,13 @@ public struct RuleEngine {
         var sessions: [AgentSession] = []
 
         for proc in processes {
-            guard let rule = agentPatterns.first(where: { $0.matches(processName: proc.name) })
+            guard let rule = agentPatterns.first(where: { $0.matches(proc) })
             else { continue }
-            let preset = AgentPresets.preset(forProcess: proc.name)
+            let preset = AgentPresets.preset(for: proc)
             sessions.append(AgentSession(
                 pid: proc.pid,
                 ppid: proc.ppid,
+                ruleID: rule.id,
                 processName: proc.name,
                 displayName: preset?.displayName ?? rule.displayName,
                 folder: proc.cwd,

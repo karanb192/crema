@@ -14,18 +14,18 @@ final class SessionActivityProbeTests: XCTestCase {
         try "{}".write(toFile: dir + "/session.jsonl", atomically: true, encoding: .utf8)
 
         let probe = SessionActivityProbe(projectsRoot: root)
-        let when = probe.lastWrite(processName: "claude", cwd: cwd)
+        let when = probe.lastClaudeWrite(cwd: cwd)
         XCTAssertNotNil(when)
         XCTAssertLessThanOrEqual(abs(when!.timeIntervalSinceNow), 5)
     }
 
-    func testNonClaudeProcessHasNoFileSignal() {
+    func testEmptyCwdHasNoFileSignal() {
         let probe = SessionActivityProbe(projectsRoot: NSTemporaryDirectory())
-        XCTAssertNil(probe.lastWrite(processName: "codex", cwd: "/Users/test/proj"))
+        XCTAssertNil(probe.lastClaudeWrite(cwd: ""))
     }
 
     func testMissingDirectoryReturnsNil() {
         let probe = SessionActivityProbe(projectsRoot: NSTemporaryDirectory() + "nope-\(getpid())")
-        XCTAssertNil(probe.lastWrite(processName: "claude", cwd: "/Users/test/proj"))
+        XCTAssertNil(probe.lastClaudeWrite(cwd: "/Users/test/proj"))
     }
 }

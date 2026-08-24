@@ -31,8 +31,8 @@ public struct Rule: Identifiable, Equatable, Codable {
         self.enabled = enabled
     }
 
-    public func matches(processName: String) -> Bool {
-        processName == pattern || processName.contains(pattern)
+    public func matches(_ process: ScannedProcess) -> Bool {
+        process.matches(pattern: pattern)
     }
 
     /// The default rule set: one agent rule per tier-1 preset (on), plus an
