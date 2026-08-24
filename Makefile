@@ -1,7 +1,7 @@
 APP  := Crema.app
 REL  := .build/release/crema
 
-.PHONY: build test app run clean
+.PHONY: build test app run sign release clean
 
 build:
 	swift build -c release
@@ -20,5 +20,14 @@ app: build
 run: app
 	open $(APP)
 
+# Build + Developer ID sign + verify, no Apple round trip (local check).
+sign:
+	./scripts/release.sh sign-only
+
+# Full release: sign, notarize, staple, zip. Needs the crema-notary keychain
+# profile (see scripts/release.sh header).
+release:
+	./scripts/release.sh
+
 clean:
-	rm -rf .build $(APP)
+	rm -rf .build $(APP) Crema-*.zip
