@@ -18,6 +18,9 @@ public struct PowerInputs: Equatable {
     public var agentHolds: [String]
     public var processHolds: [String]
     public var workingCount: Int
+    /// True while inside the grace window after the last agent turn ended, so
+    /// a brief lull between turns does not drop the Mac straight to sleep.
+    public var graceActive: Bool
     public var now: Date
 
     public init(restNow: Bool = false,
@@ -26,6 +29,7 @@ public struct PowerInputs: Equatable {
                 agentHolds: [String] = [],
                 processHolds: [String] = [],
                 workingCount: Int = 0,
+                graceActive: Bool = false,
                 now: Date = Date()) {
         self.restNow = restNow
         self.pinnedUntil = pinnedUntil
@@ -33,6 +37,7 @@ public struct PowerInputs: Equatable {
         self.agentHolds = agentHolds
         self.processHolds = processHolds
         self.workingCount = workingCount
+        self.graceActive = graceActive
         self.now = now
     }
 }
@@ -64,9 +69,12 @@ public func decidePower(_ input: PowerInputs) -> PowerDecision {
     if input.reviewing { reasons.append("Reviewing, screen stays on") }
     reasons.append(contentsOf: input.agentHolds)
     reasons.append(contentsOf: input.processHolds)
+    if input.graceActive && input.agentHolds.isEmpty {
+        reasons.append("Agents just finished, resting soon")
+    }
 
     let ruleHold = !input.agentHolds.isEmpty || !input.processHolds.isEmpty
-    let systemHold = pinActive || input.reviewing || ruleHold
+    let systemHold = pinActive || input.reviewing || ruleHold || input.graceActive
     let displayHold = input.reviewing
 
     let iconState: IconState
@@ -79,7 +87,7 @@ public func decidePower(_ input: PowerInputs) -> PowerDecision {
     } else if !input.processHolds.isEmpty {
         iconState = .working   // a batch tool is actively running
     } else {
-        iconState = .holding   // a pin or timer with no live work
+        iconState = .holding   // a pin, timer, or grace window with no live work
     }
 
     return PowerDecision(systemHold: systemHold, displayHold: displayHold,

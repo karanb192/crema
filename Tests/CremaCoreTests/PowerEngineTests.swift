@@ -71,6 +71,19 @@ final class PowerEngineTests: XCTestCase {
         XCTAssertEqual(d.iconState, .suppressed)
     }
 
+    func testGraceHoldsAfterAgentsFinish() {
+        let d = decidePower(PowerInputs(graceActive: true, now: now))
+        XCTAssertTrue(d.systemHold)
+        XCTAssertEqual(d.iconState, .holding)
+        XCTAssertEqual(d.reasons.first, "Agents just finished, resting soon")
+    }
+
+    func testRestNowBeatsGrace() {
+        let d = decidePower(PowerInputs(restNow: true, graceActive: true, now: now))
+        XCTAssertFalse(d.systemHold)
+        XCTAssertEqual(d.iconState, .suppressed)
+    }
+
     func testInfinitePinReasonReads() {
         let d = decidePower(PowerInputs(pinnedUntil: .distantFuture, now: now))
         XCTAssertEqual(d.reasons.first, "Pinned awake")

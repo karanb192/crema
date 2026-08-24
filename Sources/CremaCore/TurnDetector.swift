@@ -15,6 +15,9 @@ public final class TurnDetector {
         public var workingThreshold: Double = 0.04
         /// Keep a session "working" for this long after its last active sample.
         public var stickySeconds: TimeInterval = 8
+        /// A transcript write newer than this counts the session as working,
+        /// even when it is network-bound and using no CPU.
+        public var fileActiveWindow: TimeInterval = 60
         public init() {}
     }
 
@@ -32,9 +35,13 @@ public final class TurnDetector {
     }
 
     /// Feed a fresh scan; returns the set of pids currently considered working.
-    /// `now` is injectable so the logic is deterministic under test.
+    /// A process is working if its CPU burst is recent (sticky) OR it wrote to
+    /// its transcript recently. `now` and `lastWrite` are injectable so the
+    /// logic is deterministic under test.
     @discardableResult
-    public func update(processes: [ScannedProcess], now: Date = Date()) -> Set<pid_t> {
+    public func update(processes: [ScannedProcess],
+                       now: Date = Date(),
+                       lastWrite: ((ScannedProcess) -> Date?)? = nil) -> Set<pid_t> {
         var working: Set<pid_t> = []
         var live: [pid_t: Sample] = [:]
 
@@ -55,8 +62,16 @@ public final class TurnDetector {
                 }
             }
 
-            let isSticky = now.timeIntervalSince(lastActive) <= config.stickySeconds
-            if isSticky { working.insert(proc.pid) }
+            let cpuActive = now.timeIntervalSince(lastActive) <= config.stickySeconds
+            let fileActive: Bool = {
+                guard let written = lastWrite?(proc) else { return false }
+                return now.timeIntervalSince(written) <= config.fileActiveWindow
+            }()
+
+            if cpuActive || fileActive {
+                working.insert(proc.pid)
+                if fileActive { lastActive = max(lastActive, now) }
+            }
 
             live[proc.pid] = Sample(cpuNanos: proc.cpuNanos, at: now, lastActive: lastActive)
         }

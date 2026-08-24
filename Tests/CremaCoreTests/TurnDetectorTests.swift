@@ -54,6 +54,28 @@ final class TurnDetectorTests: XCTestCase {
         XCTAssertTrue(working.contains(3))
     }
 
+    func testRecentTranscriptWriteMarksWorking() {
+        let detector = TurnDetector()
+        let p = proc(pid: 5, cpuNanos: 0)
+        _ = detector.update(processes: [p], now: start)
+        // No CPU growth at all, but a transcript write 5s ago -> working.
+        let working = detector.update(processes: [p], now: start.addingTimeInterval(10)) { _ in
+            self.start.addingTimeInterval(5)
+        }
+        XCTAssertTrue(working.contains(5))
+    }
+
+    func testOldTranscriptWriteDoesNotMarkWorking() {
+        let detector = TurnDetector()
+        let p = proc(pid: 6, cpuNanos: 0)
+        _ = detector.update(processes: [p], now: start)
+        // Last write is 200s old, well past the file-active window.
+        let working = detector.update(processes: [p], now: start.addingTimeInterval(200)) { _ in
+            self.start
+        }
+        XCTAssertFalse(working.contains(6))
+    }
+
     func testExitedProcessIsForgotten() {
         let detector = TurnDetector()
         _ = detector.update(processes: [proc(pid: 4, cpuNanos: 0)], now: start)

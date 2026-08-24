@@ -19,9 +19,13 @@ final class AppModel: ObservableObject {
     private let detector = TurnDetector()
     private let engine = RuleEngine()
     private let controller = AssertionController()
+    private let activity = SessionActivityProbe()
     private var timer: Timer?
 
     private let scanInterval: TimeInterval = 5
+    /// How long to keep holding after the last agent turn ends.
+    private let graceSeconds: TimeInterval = 600
+    private var lastAgentWorkingAt: Date?
 
     init() {
         tick()
@@ -81,13 +85,22 @@ final class AppModel: ObservableObject {
         }
 
         let processes = scanner.snapshot()
-        let working = detector.update(processes: processes, now: now)
+        let working = detector.update(processes: processes, now: now) { [activity] proc in
+            activity.lastWrite(processName: proc.name, cwd: proc.cwd)
+        }
         let result = engine.evaluate(rules: rules, processes: processes, workingPIDs: working)
 
         sessions = engine.sessions(
             rules: rules, processes: processes, workingPIDs: working,
             lastActive: { [detector] pid in detector.lastActive(for: pid) }
         )
+
+        // Grace: keep holding for a while after the last agent turn ends.
+        if result.workingSessionCount > 0 { lastAgentWorkingAt = now }
+        let graceActive: Bool = {
+            guard result.agentHolds.isEmpty, let last = lastAgentWorkingAt else { return false }
+            return now.timeIntervalSince(last) <= graceSeconds
+        }()
 
         let input = PowerInputs(
             restNow: restNow,
@@ -96,6 +109,7 @@ final class AppModel: ObservableObject {
             agentHolds: result.agentHolds,
             processHolds: result.processHolds,
             workingCount: result.workingSessionCount,
+            graceActive: graceActive,
             now: now
         )
         let decision = decidePower(input)
