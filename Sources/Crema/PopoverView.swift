@@ -133,6 +133,14 @@ struct PopoverView: View {
                 chip("Forever", active: isInfinitePin()) { model.pin(minutes: nil) }
                 chip("Rest now", active: false) { model.rest() }
             }
+            HStack {
+                Spacer()
+                Button("Quit Crema") { NSApplication.shared.terminate(nil) }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.top, 2)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 11)
