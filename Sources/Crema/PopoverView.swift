@@ -66,28 +66,26 @@ struct PopoverView: View {
 
     /// Cap visible sessions per rule so 20 or 30 agents stay usable. Sessions
     /// are already sorted working-first, so the shown ones are the ones you act
-    /// on; the rest collapse into a "+ N more" row. The whole area scrolls with
-    /// a bounded height so the popover never grows past the screen.
+    /// on; the rest collapse into a "+ N more" row. Rendered as a plain stack:
+    /// a ScrollView here collapses to zero height inside a menu bar popover,
+    /// and the per-rule cap already bounds the height.
     private let maxSessionsShown = 5
 
     private var rulesAndSessions: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                ForEach(model.rules) { rule in
-                    ruleRow(rule)
-                    let ruleSessions = model.sessions.filter { $0.ruleID == rule.id }
-                    ForEach(ruleSessions.prefix(maxSessionsShown)) { session in
-                        sessionRow(session)
-                    }
-                    if ruleSessions.count > maxSessionsShown {
-                        moreRow(hidden: ruleSessions.count - maxSessionsShown,
-                                hiddenWorking: ruleSessions.dropFirst(maxSessionsShown).filter(\.isWorking).count)
-                    }
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(model.rules) { rule in
+                ruleRow(rule)
+                let ruleSessions = model.sessions.filter { $0.ruleID == rule.id }
+                ForEach(ruleSessions.prefix(maxSessionsShown)) { session in
+                    sessionRow(session)
+                }
+                if ruleSessions.count > maxSessionsShown {
+                    moreRow(hidden: ruleSessions.count - maxSessionsShown,
+                            hiddenWorking: ruleSessions.dropFirst(maxSessionsShown).filter(\.isWorking).count)
                 }
             }
-            .padding(.vertical, 4)
         }
-        .frame(maxHeight: 300)
+        .padding(.vertical, 4)
     }
 
     private func moreRow(hidden: Int, hiddenWorking: Int) -> some View {
