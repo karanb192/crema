@@ -47,7 +47,10 @@ public final class TurnDetector {
 
         for proc in processes {
             let previous = samples[proc.pid]
-            var lastActive = previous?.lastActive ?? proc.startTime
+            // A never-before-seen process starts idle: seed lastActive far in
+            // the past so the sticky window cannot count "just launched" as
+            // working. Only a real CPU burst or transcript write marks it.
+            var lastActive = previous?.lastActive ?? .distantPast
 
             if let prev = previous {
                 let elapsed = now.timeIntervalSince(prev.at)

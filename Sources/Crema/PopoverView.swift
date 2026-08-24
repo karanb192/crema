@@ -64,16 +64,44 @@ struct PopoverView: View {
         .padding(14)
     }
 
+    /// Cap visible sessions per rule so 20 or 30 agents stay usable. Sessions
+    /// are already sorted working-first, so the shown ones are the ones you act
+    /// on; the rest collapse into a "+ N more" row. The whole area scrolls with
+    /// a bounded height so the popover never grows past the screen.
+    private let maxSessionsShown = 5
+
     private var rulesAndSessions: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(model.rules) { rule in
-                ruleRow(rule)
-                ForEach(model.sessions.filter { $0.ruleID == rule.id }) { session in
-                    sessionRow(session)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(model.rules) { rule in
+                    ruleRow(rule)
+                    let ruleSessions = model.sessions.filter { $0.ruleID == rule.id }
+                    ForEach(ruleSessions.prefix(maxSessionsShown)) { session in
+                        sessionRow(session)
+                    }
+                    if ruleSessions.count > maxSessionsShown {
+                        moreRow(hidden: ruleSessions.count - maxSessionsShown,
+                                hiddenWorking: ruleSessions.dropFirst(maxSessionsShown).filter(\.isWorking).count)
+                    }
                 }
             }
+            .padding(.vertical, 4)
         }
-        .padding(.vertical, 4)
+        .frame(maxHeight: 300)
+    }
+
+    private func moreRow(hidden: Int, hiddenWorking: Int) -> some View {
+        HStack {
+            Text(hiddenWorking > 0
+                 ? "+ \(hidden) more (\(hiddenWorking) working)"
+                 : "+ \(hidden) more")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+            Spacer()
+        }
+        .padding(.leading, 34)
+        .padding(.trailing, 14)
+        .padding(.vertical, 3)
     }
 
     private func ruleRow(_ rule: Rule) -> some View {
@@ -172,8 +200,7 @@ struct PopoverView: View {
     }
 
     private func isPinned(minutes: Int) -> Bool {
-        guard let until = model.pinnedUntil, until < .distantFuture else { return false }
-        return true
+        model.pinnedMinutes == minutes
     }
 
     private func isInfinitePin() -> Bool {

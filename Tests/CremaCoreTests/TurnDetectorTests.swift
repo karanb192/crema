@@ -76,6 +76,16 @@ final class TurnDetectorTests: XCTestCase {
         XCTAssertFalse(working.contains(6))
     }
 
+    func testFirstObservationIsIdle() {
+        let detector = TurnDetector()
+        // A never-before-seen process, even one that started seconds ago, must
+        // not be reported working until real activity is observed.
+        let fresh = ScannedProcess(pid: 7, ppid: 1, name: "claude", path: "/usr/bin/claude",
+                                   cpuNanos: 0, startTime: start, cwd: "")
+        let working = detector.update(processes: [fresh], now: start.addingTimeInterval(2))
+        XCTAssertFalse(working.contains(7))
+    }
+
     func testExitedProcessIsForgotten() {
         let detector = TurnDetector()
         _ = detector.update(processes: [proc(pid: 4, cpuNanos: 0)], now: start)
