@@ -75,7 +75,7 @@ final class PowerEngineTests: XCTestCase {
         let d = decidePower(PowerInputs(graceActive: true, now: now))
         XCTAssertTrue(d.systemHold)
         XCTAssertEqual(d.iconState, .holding)
-        XCTAssertEqual(d.reasons.first, "Agents just finished, resting soon")
+        XCTAssertEqual(d.reasons.first, "Agents just finished, Mac can sleep soon")
     }
 
     func testRestNowBeatsGrace() {
@@ -86,11 +86,11 @@ final class PowerEngineTests: XCTestCase {
 
     func testInfinitePinReasonReads() {
         let d = decidePower(PowerInputs(pinnedUntil: .distantFuture, now: now))
-        XCTAssertEqual(d.reasons.first, "Pinned awake")
+        XCTAssertEqual(d.reasons.first, "Awake until you turn it off")
     }
 
     func testFinitePinReasonReadsMinutes() {
         let d = decidePower(PowerInputs(pinnedUntil: now.addingTimeInterval(3600), now: now))
-        XCTAssertEqual(d.reasons.first, "Pinned for 60 min")
+        XCTAssertEqual(d.reasons.first, "Awake for another 60 min")
     }
 }

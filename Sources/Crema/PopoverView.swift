@@ -51,7 +51,7 @@ struct PopoverView: View {
 
     private var restBanner: some View {
         HStack {
-            Text("Resting. Everything is suppressed until you resume.")
+            Text("Paused. Crema isn't keeping the Mac awake.")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
             Spacer()
@@ -146,18 +146,36 @@ struct PopoverView: View {
         .opacity(session.isWorking ? 1 : 0.65)
     }
 
+    /// Manual holds. Every chip is a toggle: click to hold, click again to
+    /// stop. Active finite pins show the time remaining in place of the
+    /// duration so the label doubles as the countdown.
     private var footer: some View {
         VStack(alignment: .leading, spacing: 7) {
-            Text("Right now")
+            Text("Keep awake")
                 .font(.system(size: 10.5))
                 .foregroundStyle(.secondary)
             HStack(spacing: 6) {
-                chip("Reviewing", active: model.reviewing) { model.toggleReviewing() }
-                chip("30 min", active: isPinned(minutes: 30)) { model.pin(minutes: 30) }
-                chip("Forever", active: isInfinitePin()) { model.pin(minutes: nil) }
-                chip("Rest now", active: false) { model.rest() }
+                chip("Screen on", active: model.reviewing) { model.toggleReviewing() }
+                    .help("Keep the Mac awake and the screen from dimming, until you turn it off")
+                chip(pinChipTitle(minutes: 30, idle: "30 min"), active: isPinned(minutes: 30)) {
+                    isPinned(minutes: 30) ? model.clearPin() : model.pin(minutes: 30)
+                }
+                .help("Keep the Mac awake for 30 minutes, whatever agents do")
+                chip(pinChipTitle(minutes: 60, idle: "1 hr"), active: isPinned(minutes: 60)) {
+                    isPinned(minutes: 60) ? model.clearPin() : model.pin(minutes: 60)
+                }
+                .help("Keep the Mac awake for 1 hour, whatever agents do")
+                chip("Until off", active: isInfinitePin()) {
+                    isInfinitePin() ? model.clearPin() : model.pin(minutes: nil)
+                }
+                .help("Keep the Mac awake until you turn it off")
             }
             HStack {
+                Button("Pause Crema") { model.rest() }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .help("Stop keeping the Mac awake until you resume. It sleeps on its normal schedule.")
                 Spacer()
                 Button("Quit Crema") { NSApplication.shared.terminate(nil) }
                     .buttonStyle(.plain)
@@ -168,6 +186,13 @@ struct PopoverView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 11)
+    }
+
+    /// "30 min" when idle, "22 min" (remaining) while that pin is running.
+    private func pinChipTitle(minutes: Int, idle: String) -> String {
+        guard isPinned(minutes: minutes), let until = model.pinnedUntil else { return idle }
+        let remaining = max(1, Int((until.timeIntervalSinceNow + 59) / 60.0))
+        return "\(remaining) min"
     }
 
     // MARK: - Bits

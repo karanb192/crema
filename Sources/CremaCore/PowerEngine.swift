@@ -6,7 +6,7 @@ public enum IconState: String, Equatable {
     case working     // agents mid-turn; cup full + steam, count shown
     case holding     // a pin, timer, or batch rule holds; cup draining
     case reviewing   // display held too; cup full + display dot
-    case suppressed  // Rest now; cup hollow with a slash
+    case suppressed  // paused; cup hollow with a slash
 }
 
 /// The inputs to the power decision, gathered each scan. Pure data so the
@@ -52,25 +52,25 @@ public struct PowerDecision: Equatable {
 }
 
 /// The precedence ladder, as one pure function:
-///   1. Rest now      -> suppress everything
-///   2. Pin / Reviewing -> your intent, survives agents finishing
+///   1. Pause            -> suppress everything
+///   2. Pin / Screen on  -> your intent, survives agents finishing
 ///   3. Agent + batch rules
 ///   4. Nothing active -> the Mac sleeps normally
 public func decidePower(_ input: PowerInputs) -> PowerDecision {
     if input.restNow {
         return PowerDecision(systemHold: false, displayHold: false,
                              iconState: .suppressed, workingCount: 0,
-                             reasons: ["Resting until you return"])
+                             reasons: ["Paused until you resume"])
     }
 
     let pinActive = input.pinnedUntil.map { $0 > input.now } ?? false
     var reasons: [String] = []
     if pinActive { reasons.append(pinReason(until: input.pinnedUntil!, now: input.now)) }
-    if input.reviewing { reasons.append("Reviewing, screen stays on") }
+    if input.reviewing { reasons.append("Screen on, no dimming") }
     reasons.append(contentsOf: input.agentHolds)
     reasons.append(contentsOf: input.processHolds)
     if input.graceActive && input.agentHolds.isEmpty {
-        reasons.append("Agents just finished, resting soon")
+        reasons.append("Agents just finished, Mac can sleep soon")
     }
 
     let ruleHold = !input.agentHolds.isEmpty || !input.processHolds.isEmpty
@@ -97,7 +97,7 @@ public func decidePower(_ input: PowerInputs) -> PowerDecision {
 }
 
 func pinReason(until: Date, now: Date) -> String {
-    if until >= Date.distantFuture.addingTimeInterval(-1) { return "Pinned awake" }
+    if until >= Date.distantFuture.addingTimeInterval(-1) { return "Awake until you turn it off" }
     let minutes = max(1, Int(until.timeIntervalSince(now) / 60.0))
-    return "Pinned for \(minutes) min"
+    return "Awake for another \(minutes) min"
 }
