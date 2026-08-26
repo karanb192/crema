@@ -12,8 +12,8 @@ The old keep-awake tools answer the wrong question. They know whether *you* clic
 
 - **Holds the Mac awake while any watched agent is mid-turn.** When every agent goes quiet, a short grace window runs out and the Mac is free to sleep. Per session, not per app: one agent working keeps you awake while the rest sit idle.
 - **Shows working vs waiting.** The popover lists each session, its folder, and whether it is working or waiting for you. The menu bar count is agents mid-turn. When it hits zero, everything is waiting on you.
-- **Pin when you are working too.** All agents finished but you are still reading the diff? Pin the Mac awake for 30 minutes, an hour, or indefinitely. Reviewing mode also keeps the screen on.
-- **Rest now.** One click suppresses everything until you resume.
+- **Hold it yourself too.** All agents finished but you are still reading the diff? Keep the Mac awake for 30 minutes, an hour, or until you turn it off. Screen on mode also stops the display from dimming.
+- **Pause.** One click and Crema stops holding; the Mac sleeps on its normal schedule until you resume.
 - **Watches any process, not just agents.** ffmpeg, rsync, a long build: add a rule for "while it runs." Agents get "while it is working."
 
 Claude Code ships as a preset that is on by default. Nothing to configure before it is useful.

@@ -146,9 +146,9 @@ final class AppModel: ObservableObject {
         case .holding:
             return decision.reasons.first ?? "Holding this Mac awake."
         case .reviewing:
-            return "Reviewing. Screen and Mac stay awake."
+            return "Screen on. Mac stays awake, screen won't dim."
         case .suppressed:
-            return "Resting. Rules are suppressed until you resume."
+            return "Paused. Crema won't keep the Mac awake until you resume."
         }
     }
 
