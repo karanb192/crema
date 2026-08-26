@@ -4,7 +4,7 @@
 # release artifact URL resolves automatically.
 cask "crema" do
   version "0.1.2"
-  sha256 "6324a0b20551e287c69c36e8f7887a9272c47a673a247da9519772bafc71ecdf"
+  sha256 "4c6a643b7752dd52739b0a227f8841664abfc184314a6384c23e96b5cfc8bb5a"
 
   url "https://github.com/karanb192/crema/releases/download/v#{version}/Crema-#{version}-arm64-mac.zip"
   name "Crema"
