@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Crema app icon, V1 "espresso night". Master for Resources/AppIcon.icns;
+       regenerate with scripts/make-icon.sh. Artwork sits in the standard
+       824px Apple margin with its own squircle and shadow. -->
+  <defs>
+    <radialGradient id="glow" cx="50%" cy="42%" r="55%">
+      <stop offset="0%" stop-color="#B4632F" stop-opacity=".55"/>
+      <stop offset="100%" stop-color="#B4632F" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="14" stdDeviation="28" flood-color="#000000" flood-opacity="0.35"/>
+    </filter>
+    <clipPath id="sq"><rect x="100" y="100" width="824" height="824" rx="186"/></clipPath>
+  </defs>
+  <g filter="url(#shadow)">
+    <rect x="100" y="100" width="824" height="824" rx="186" fill="#17110C"/>
+  </g>
+  <g clip-path="url(#sq)">
+    <rect x="100" y="100" width="824" height="824" fill="url(#glow)"/>
+    <g transform="translate(100,100) scale(0.8046875)">
+      <path d="M290 420 h380 a24 24 0 0 1 24 26 l-30 300 a72 72 0 0 1 -72 64 h-224 a72 72 0 0 1 -72 -64 l-30 -300 a24 24 0 0 1 24 -26 z" fill="#F4E9DE"/>
+      <path d="M310 446 h340 l-14 130 h-312 z" fill="#B4632F"/>
+      <path d="M714 470 a96 108 0 0 1 0 200 l-10 -62 a44 46 0 0 0 0 -80 z" fill="#F4E9DE"/>
+      <path d="M430 330 c-26 -40 18 -62 -6 -104" stroke="#E3A574" stroke-width="40" stroke-linecap="round" fill="none"/>
+      <path d="M550 336 c-26 -44 20 -70 -8 -118" stroke="#E3A574" stroke-width="40" stroke-linecap="round" fill="none" opacity=".75"/>
+    </g>
+  </g>
+</svg>

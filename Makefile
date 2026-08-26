@@ -15,6 +15,7 @@ app: build
 	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources
 	cp $(REL) $(APP)/Contents/MacOS/crema
 	cp Resources/Info.plist $(APP)/Contents/Info.plist
+	cp Resources/AppIcon.icns $(APP)/Contents/Resources/AppIcon.icns
 	@echo "Built $(APP). Launch with: open $(APP)"
 
 run: app

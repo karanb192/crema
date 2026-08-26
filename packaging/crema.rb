@@ -3,7 +3,7 @@
 # Update `version` and `sha256` from `scripts/release.sh` output, then the
 # release artifact URL resolves automatically.
 cask "crema" do
-  version "0.1.1"
+  version "0.1.2"
   sha256 "6324a0b20551e287c69c36e8f7887a9272c47a673a247da9519772bafc71ecdf"
 
   url "https://github.com/karanb192/crema/releases/download/v#{version}/Crema-#{version}-arm64-mac.zip"
