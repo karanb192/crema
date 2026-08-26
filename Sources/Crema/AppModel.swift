@@ -8,6 +8,7 @@ import CremaCore
 final class AppModel: ObservableObject {
     @Published private(set) var sessions: [AgentSession] = []
     @Published private(set) var decision = decidePower(PowerInputs())
+    @Published private(set) var runningBatchRuleIDs: [String] = []
     @Published var rules: [Rule] = Rule.defaults()
 
     // User intent.
@@ -85,6 +86,15 @@ final class AppModel: ObservableObject {
     // MARK: - The loop
 
     func tick() {
+        // Marketing screenshot mode: fixed hypothetical sessions, no scan, no
+        // assertion touched. See DemoMode.
+        if DemoMode.enabled {
+            sessions = DemoMode.sessions()
+            decision = decidePower(DemoMode.inputs())
+            runningBatchRuleIDs = []
+            return
+        }
+
         // Expire a finite pin (main-actor state) before scheduling the scan.
         if let until = pinnedUntil, until <= Date(), until < .distantFuture {
             pinnedUntil = nil
@@ -107,6 +117,7 @@ final class AppModel: ObservableObject {
                 self.holdFailed = !self.controller.apply(output.decision)
                 self.sessions = output.sessions
                 self.decision = output.decision
+                self.runningBatchRuleIDs = output.runningBatchRuleIDs
                 self.scanning = false
             }
         }

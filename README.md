@@ -2,6 +2,8 @@
 
 **Keep your Mac awake while your AI coding agents are working, and let it sleep the moment they are done.**
 
+<p align="center"><img src="assets/hero.png" width="520" alt="Crema popover: sessions marked working or waiting per agent, manual keep-awake holds below"></p>
+
 Crema is a menu bar app for macOS. It is a `caffeinate` you can actually see, and an [Amphetamine](https://apps.apple.com/us/app/amphetamine/id937984704) alternative built for a newer problem: you now run coding agents all day, in a dozen terminals, and "is anything still running" is a question you ask constantly.
 
 The old keep-awake tools answer the wrong question. They know whether *you* clicked a toggle. They do not know whether Claude Code is mid-turn in one window while three others sit waiting for your next prompt. Crema does.

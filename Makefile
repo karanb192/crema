@@ -32,3 +32,9 @@ release:
 
 clean:
 	rm -rf .build $(APP) Crema-*.zip
+
+# Regenerate the marketing hero: the real popover UI rendered with
+# hypothetical demo sessions (never real folder names).
+screenshot: app
+	CREMA_DEMO=1 CREMA_SCREENSHOT=assets/hero.png ./Crema.app/Contents/MacOS/crema
+	@echo "Wrote assets/hero.png"

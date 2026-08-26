@@ -9,6 +9,11 @@ public struct RuleEngine {
         public var agentHolds: [String]     // "Claude Code (2 working)"
         public var processHolds: [String]   // "ffmpeg running"
         public var workingSessionCount: Int
+        /// Batch rules whose process exists right now, enabled or not. Batch
+        /// rows are transient in the UI (shown only while running), so this
+        /// must not depend on `enabled`, or toggling one off would make the
+        /// row vanish before it could be toggled back.
+        public var runningBatchRuleIDs: [String]
     }
 
     public init() {}
@@ -19,8 +24,9 @@ public struct RuleEngine {
         var agentHolds: [String] = []
         var processHolds: [String] = []
         var workingCount = 0
+        var runningBatch: [String] = []
 
-        for rule in rules where rule.enabled {
+        for rule in rules {
             // Agent rules ignore GUI apps (e.g. Claude.app); batch rules may
             // legitimately watch an app, so only filter bundles for agents.
             let matched = processes.filter {
@@ -30,19 +36,24 @@ public struct RuleEngine {
 
             switch rule.kind {
             case .whileAgentWorking:
+                guard rule.enabled else { continue }
                 let working = matched.filter { workingPIDs.contains($0.pid) }
                 if !working.isEmpty {
                     workingCount += working.count
                     agentHolds.append("\(rule.displayName) (\(working.count) working)")
                 }
             case .whileProcessRuns:
-                processHolds.append("\(rule.displayName) running")
+                runningBatch.append(rule.id)
+                if rule.enabled {
+                    processHolds.append("\(rule.displayName) running")
+                }
             }
         }
 
         return Result(agentHolds: agentHolds,
                       processHolds: processHolds,
-                      workingSessionCount: workingCount)
+                      workingSessionCount: workingCount,
+                      runningBatchRuleIDs: runningBatch)
     }
 
     /// Builds display sessions for every process matched by an enabled agent

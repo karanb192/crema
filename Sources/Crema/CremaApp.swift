@@ -21,6 +21,9 @@ struct CremaApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        if let path = DemoMode.screenshotPath {
+            Task { @MainActor in DemoMode.renderScreenshot(to: path) }
+        }
     }
 }
 

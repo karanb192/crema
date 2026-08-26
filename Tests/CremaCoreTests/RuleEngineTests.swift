@@ -60,6 +60,27 @@ final class RuleEngineTests: XCTestCase {
         XCTAssertEqual(result.workingSessionCount, 0)
     }
 
+    func testBatchRulePresenceReportedEvenWhenDisabled() {
+        let engine = RuleEngine()
+        var rules = Rule.defaults()
+        for i in rules.indices where rules[i].kind == .whileProcessRuns {
+            rules[i].enabled = false
+        }
+        let ffmpegRuleID = rules.first { $0.kind == .whileProcessRuns }!.id
+        let result = engine.evaluate(rules: rules, processes: [proc(401, "ffmpeg")],
+                                     workingPIDs: [])
+        XCTAssertTrue(result.processHolds.isEmpty, "disabled batch rule must not hold")
+        XCTAssertEqual(result.runningBatchRuleIDs, [ffmpegRuleID],
+                       "presence must be visible so the row can be toggled back on")
+    }
+
+    func testBatchRuleAbsentWhenProcessNotRunning() {
+        let engine = RuleEngine()
+        let result = engine.evaluate(rules: Rule.defaults(), processes: [proc(501, "claude")],
+                                     workingPIDs: [])
+        XCTAssertTrue(result.runningBatchRuleIDs.isEmpty)
+    }
+
     func testDisabledRuleIsIgnored() {
         let engine = RuleEngine()
         var rules = Rule.defaults()
