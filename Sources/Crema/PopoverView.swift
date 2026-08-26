@@ -69,9 +69,22 @@ struct PopoverView: View {
     /// and the per-rule cap already bounds the height.
     private let maxSessionsShown = 5
 
+    /// Agent rules are standing workflows and always show. Batch rules
+    /// (ffmpeg and friends) are transient: their row appears only while the
+    /// process actually exists, so the default list never carries dead rows
+    /// for tools you are not running.
+    private var visibleRules: [Rule] {
+        model.rules.filter { rule in
+            switch rule.kind {
+            case .whileAgentWorking: return true
+            case .whileProcessRuns: return model.runningBatchRuleIDs.contains(rule.id)
+            }
+        }
+    }
+
     private var rulesAndSessions: some View {
         VStack(alignment: .leading, spacing: 0) {
-            ForEach(model.rules) { rule in
+            ForEach(visibleRules) { rule in
                 ruleRow(rule)
                 let ruleSessions = model.sessions.filter { $0.ruleID == rule.id }
                 ForEach(ruleSessions.prefix(maxSessionsShown)) { session in
@@ -102,14 +115,18 @@ struct PopoverView: View {
 
     private func ruleRow(_ rule: Rule) -> some View {
         HStack(spacing: 8) {
-            Toggle("", isOn: Binding(
-                get: { rule.enabled },
-                set: { model.setRule(id: rule.id, enabled: $0) }
-            ))
-            .toggleStyle(.switch)
-            .labelsHidden()
-            .tint(crema)
-            .scaleEffect(0.8)
+            if DemoMode.isScreenshotRun {
+                DemoSwitch(on: rule.enabled, tint: crema)
+            } else {
+                Toggle("", isOn: Binding(
+                    get: { rule.enabled },
+                    set: { model.setRule(id: rule.id, enabled: $0) }
+                ))
+                .toggleStyle(.switch)
+                .labelsHidden()
+                .tint(crema)
+                .scaleEffect(0.8)
+            }
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(rule.displayName)
@@ -216,7 +233,7 @@ struct PopoverView: View {
             let n = model.sessions.filter { $0.ruleID == rule.id }.count
             return n == 0 ? "no sessions running" : "\(n) session\(n == 1 ? "" : "s") · holds while working"
         case .whileProcessRuns:
-            return "holds while it runs"
+            return rule.enabled ? "running · holds until it exits" : "running · not holding"
         }
     }
 

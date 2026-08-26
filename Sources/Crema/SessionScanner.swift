@@ -17,6 +17,7 @@ final class SessionScanner {
     struct Output {
         var sessions: [AgentSession]
         var decision: PowerDecision
+        var runningBatchRuleIDs: [String]
     }
 
     private let scanner = ProcessScanner()
@@ -80,6 +81,7 @@ final class SessionScanner {
             graceActive: graceActive,
             now: now
         )
-        return Output(sessions: sessions, decision: decidePower(input))
+        return Output(sessions: sessions, decision: decidePower(input),
+                      runningBatchRuleIDs: result.runningBatchRuleIDs)
     }
 }
