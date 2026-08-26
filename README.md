@@ -20,6 +20,10 @@ The old keep-awake tools answer the wrong question. They know whether *you* clic
 
 Claude Code ships as a preset that is on by default. Nothing to configure before it is useful.
 
+## See it work
+
+<p align="center"><img src="assets/demo.gif" width="640" alt="Crema demo: the popover lists sessions working and waiting, the count drains to zero, the Mac sleeps"></p>
+
 ## Why not just use caffeinate, Amphetamine, or KeepingYouAwake?
 
 | Tool | What it does | What it misses |
