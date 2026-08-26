@@ -8,7 +8,7 @@ cask "crema" do
 
   url "https://github.com/karanb192/crema/releases/download/v#{version}/Crema-#{version}-arm64-mac.zip"
   name "Crema"
-  desc "Keep your Mac awake while your AI coding agents are working"
+  desc "Prevents the system from sleeping while AI coding agents are working"
   homepage "https://github.com/karanb192/crema"
 
   livecheck do
@@ -17,6 +17,7 @@ cask "crema" do
   end
 
   depends_on arch: :arm64
+  depends_on macos: :ventura
 
   app "Crema.app"
 
