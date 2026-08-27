@@ -2,7 +2,7 @@ import Foundation
 
 /// A known coding agent we ship a named preset for. The process name is what
 /// the scanner matches; the session directory is where the agent writes its
-/// transcript (used by the precise turn signal in a later version).
+/// transcript (only Claude Code's is read today; the rest are for the precise turn signals planned in a later version).
 public struct AgentPreset: Equatable {
     public let id: String
     public let displayName: String
@@ -20,9 +20,10 @@ public struct AgentPreset: Equatable {
 }
 
 public enum AgentPresets {
-    /// Tier 1 presets. Paths verified present on the developer machine; the
-    /// session dir is used as a coarse activity hint, the CPU signal is the
-    /// authoritative per-session turn detector today.
+    /// Tier 1 presets. Paths verified present on the developer machine. Only
+    /// Claude Code's session dir feeds the precise turn signal today (see
+    /// SessionActivityProbe); the others are recorded for the per-agent
+    /// signals planned later, and those agents use the CPU signal for now.
     public static let tier1: [AgentPreset] = [
         AgentPreset(id: "claude",  displayName: "Claude Code", processName: "claude",  sessionDir: "~/.claude/projects", tier: 1),
         AgentPreset(id: "codex",   displayName: "Codex CLI",   processName: "codex",   sessionDir: "~/.codex/sessions",  tier: 1),
