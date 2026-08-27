@@ -37,7 +37,7 @@ None of them know the difference between an agent working and an agent waiting f
 
 ## Install
 
-Once the first signed release ships, via Homebrew:
+Via Homebrew:
 
 ```bash
 brew install --cask karanb192/tap/crema
@@ -46,7 +46,7 @@ brew install --cask karanb192/tap/crema
 Builds are Developer ID signed and notarized, so the app opens first try with no
 Gatekeeper hoops. Apple Silicon only.
 
-Building from source meanwhile:
+Or build from source (Xcode 15+ / Swift 5.9+):
 
 ```bash
 git clone https://github.com/karanb192/crema.git
@@ -59,9 +59,8 @@ The cup appears in your menu bar. There is no Dock icon and no window; it is a b
 ## How it works
 
 - **Power** is a single [`IOPMAssertionCreateWithName`](https://developer.apple.com/documentation/iokit/1557134-iopmassertioncreatewithname) assertion, the same call `caffeinate` makes. One assertion, many reasons.
-- **Turn detection** reads each watched process's CPU rate between scans via `libproc`. An agent mid-turn burns CPU and spawns tool subprocesses; a waiting agent sits near zero. A short sticky window keeps streaming pauses from flapping the state.
+- **Turn detection** has two signals. For Claude Code, Crema watches the session transcript files it appends to while mid-turn (`~/.claude/projects`), which stays precise even when the agent is network-bound and burning no CPU. Every other agent, preset or custom, uses a CPU heuristic via `libproc`: an agent mid-turn burns CPU and spawns tool subprocesses, a waiting agent sits near zero, and a short sticky window keeps streaming pauses from flapping the state.
 - **Attribution** walks each process for its working directory, so a session shows as its folder, not a bare pid.
-- **The radar** reads every power assertion on the system, not only its own, so a stray `caffeinate` you started by hand shows up too.
 
 The engine lives in `CremaCore` and is covered by unit tests, including an integration test that creates a real assertion and confirms macOS lists it via `pmset -g assertions`.
 
@@ -71,7 +70,7 @@ make test
 
 ## Agents supported
 
-Presets ship for the agents with a named signal. Everything else, and any tool you name in a custom rule, works through the generic CPU signal.
+Presets ship for the agents below. Claude Code gets the precise per-session turn signal (transcript writes); the rest currently use the CPU heuristic, with their precise signals on the roadmap. Anything else you name in a custom rule works through the CPU signal too.
 
 | Agent | Process | Preset |
 | --- | --- | --- |
@@ -84,7 +83,7 @@ Presets ship for the agents with a named signal. Everything else, and any tool y
 
 ## Status
 
-Early. Private while the core is reviewed. The power engine and detection are tested and working; the UI and packaging are still moving. Not yet signed or notarized.
+Early but solid. The power engine and detection are unit-tested and in daily use; releases are Developer ID signed and notarized. Next up: precise turn signals for Codex, Gemini, Copilot and opencode, and a radar for power assertions Crema does not own (that stray hand-started `caffeinate`).
 
 ## License
 
