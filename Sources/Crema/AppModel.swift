@@ -9,6 +9,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var sessions: [AgentSession] = []
     @Published private(set) var decision = decidePower(PowerInputs())
     @Published private(set) var runningBatchRuleIDs: [String] = []
+    @Published private(set) var ledger = AppModel.loadLedger()
     @Published var rules: [Rule] = Rule.defaults()
 
     // User intent.
@@ -118,6 +119,7 @@ final class AppModel: ObservableObject {
                 self.sessions = output.sessions
                 self.decision = output.decision
                 self.runningBatchRuleIDs = output.runningBatchRuleIDs
+                self.recordLedger(held: output.decision.systemHold)
                 self.scanning = false
             }
         }
@@ -165,4 +167,41 @@ final class AppModel: ObservableObject {
 
     var workingCount: Int { sessions.filter(\.isWorking).count }
     var waitingCount: Int { sessions.filter { !$0.isWorking }.count }
+
+    // MARK: - Awake ledger
+
+    private static let ledgerKey = "holdLedger"
+
+    /// One honest, falsifiable line: how long Crema actually held the Mac
+    /// awake over the trailing day, and how often it let go. Hidden until an
+    /// hour of history exists so it never shows "2 min of the last 2 min".
+    var ledgerLine: String? {
+        if DemoMode.enabled { return "Awake 2.9 h of the last 10 h · released 14 times" }
+        let s = ledger.summary()
+        guard s.spanSeconds >= 3600 else { return nil }
+        let released = s.releaseCount == 1 ? "released once" : "released \(s.releaseCount) times"
+        return "Awake \(Self.hours(s.heldSeconds)) of the last \(Self.hours(s.spanSeconds)) · \(released)"
+    }
+
+    private func recordLedger(held: Bool) {
+        let before = ledger
+        ledger.record(held: held)
+        guard ledger != before else { return }
+        if let data = try? JSONEncoder().encode(ledger) {
+            UserDefaults.standard.set(data, forKey: Self.ledgerKey)
+        }
+    }
+
+    private static func loadLedger() -> HoldLedger {
+        guard let data = UserDefaults.standard.data(forKey: ledgerKey),
+              let stored = try? JSONDecoder().decode(HoldLedger.self, from: data) else {
+            return HoldLedger()
+        }
+        return stored
+    }
+
+    private static func hours(_ seconds: TimeInterval) -> String {
+        seconds < 3600 ? "\(max(1, Int(seconds / 60))) min"
+                       : String(format: "%.1f h", seconds / 3600)
+    }
 }

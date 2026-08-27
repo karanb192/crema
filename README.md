@@ -12,6 +12,7 @@ The old keep-awake tools answer the wrong question. They know whether *you* clic
 
 ## What it does
 
+- **Shows its receipts.** A rolling ledger in the popover: how long Crema actually held the Mac awake over the last day, and how many times it let go. A keep-awake app should be able to prove it lets your Mac sleep.
 - **Holds the Mac awake while any watched agent is mid-turn.** When every agent goes quiet, a short grace window runs out and the Mac is free to sleep. Per session, not per app: one agent working keeps you awake while the rest sit idle.
 - **Shows working vs waiting.** The popover lists each session, its folder, and whether it is working or waiting for you. The menu bar count is agents mid-turn. When it hits zero, everything is waiting on you.
 - **Hold it yourself too.** All agents finished but you are still reading the diff? Keep the Mac awake for 30 minutes, an hour, or until you turn it off. Screen on mode also stops the display from dimming.
