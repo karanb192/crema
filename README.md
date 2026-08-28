@@ -82,6 +82,15 @@ Presets ship for the agents below. Claude Code gets the precise per-session turn
 | [opencode](https://github.com/sst/opencode) | `opencode` | yes |
 | Anything else | any | custom rule |
 
+## Limits
+
+Known gaps, stated here so you do not find them the hard way:
+
+- Precise turn detection is Claude Code only today. Codex, Gemini, Copilot and opencode run on the CPU heuristic, which is right most of the time but can misread a long network wait as idle.
+- Closing the lid sleeps the Mac. That is macOS: no app-level assertion survives a lid close on battery. Lid open or clamshell mode (external display plus power) are the supported shapes. A lid-closed mode would need a privileged helper; if it ships, it ships with the turn-state auto-release so a Mac in a bag cannot cook itself.
+- Crema only sees its own holds. A stray hand-started caffeinate or another app's assertion is invisible to it for now; the radar for that is the top roadmap item.
+- Apple Silicon only, macOS 13+.
+
 ## Status
 
 Early but solid. The power engine and detection are unit-tested and in daily use; releases are Developer ID signed and notarized. Next up: precise turn signals for Codex, Gemini, Copilot and opencode, and a radar for power assertions Crema does not own (that stray hand-started `caffeinate`).
