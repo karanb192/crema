@@ -16,8 +16,12 @@ public final class TurnDetector {
         /// Keep a session "working" for this long after its last active sample.
         public var stickySeconds: TimeInterval = 8
         /// A transcript write newer than this counts the session as working,
-        /// even when it is network-bound and using no CPU.
-        public var fileActiveWindow: TimeInterval = 60
+        /// even when it is network-bound and using no CPU. Wide on purpose:
+        /// an agent appends nothing while a single tool call runs, so a
+        /// medium step (a fetch, an install, a slow API turn) must not flip
+        /// the session to waiting between appends (issue #20). Sleep timing
+        /// is unaffected; the grace window governs that.
+        public var fileActiveWindow: TimeInterval = 150
         public init() {}
     }
 
@@ -44,6 +48,7 @@ public final class TurnDetector {
                        lastWrite: ((ScannedProcess) -> Date?)? = nil) -> Set<pid_t> {
         var working: Set<pid_t> = []
         var live: [pid_t: Sample] = [:]
+        let subtree = Self.subtreeNanos(for: processes)
 
         for proc in processes {
             let previous = samples[proc.pid]
@@ -51,13 +56,15 @@ public final class TurnDetector {
             // the past so the sticky window cannot count "just launched" as
             // working. Only a real CPU burst or transcript write marks it.
             var lastActive = previous?.lastActive ?? .distantPast
+            let nanosNow = subtree[proc.pid] ?? proc.cpuNanos
 
             if let prev = previous {
                 let elapsed = now.timeIntervalSince(prev.at)
                 if elapsed > 0 {
-                    // CPU time can only grow; guard against counter resets.
-                    let deltaNanos = proc.cpuNanos >= prev.cpuNanos
-                        ? Double(proc.cpuNanos - prev.cpuNanos) : 0
+                    // CPU time can only grow; the guard covers counter resets
+                    // and the subtree sum dropping when a child exits.
+                    let deltaNanos = nanosNow >= prev.cpuNanos
+                        ? Double(nanosNow - prev.cpuNanos) : 0
                     let coresUsed = (deltaNanos / 1_000_000_000.0) / elapsed
                     if coresUsed >= config.workingThreshold {
                         lastActive = now
@@ -76,11 +83,35 @@ public final class TurnDetector {
                 if fileActive { lastActive = max(lastActive, now) }
             }
 
-            live[proc.pid] = Sample(cpuNanos: proc.cpuNanos, at: now, lastActive: lastActive)
+            live[proc.pid] = Sample(cpuNanos: nanosNow, at: now, lastActive: lastActive)
         }
 
         samples = live   // drops pids that have exited
         return working
+    }
+
+    /// Cumulative CPU of each process plus its live descendants. An agent
+    /// mid-turn often burns its CPU in tool subprocesses (a build, a test
+    /// run, a subagent) while the agent process itself waits at ~0%, so the
+    /// turn signal must watch the whole subtree, not one pid (issue #20).
+    private static func subtreeNanos(for processes: [ScannedProcess]) -> [pid_t: UInt64] {
+        var childIndexes: [pid_t: [Int]] = [:]
+        for (index, proc) in processes.enumerated() where proc.ppid != proc.pid {
+            childIndexes[proc.ppid, default: []].append(index)
+        }
+        var memo: [pid_t: UInt64] = [:]
+        func total(_ index: Int) -> UInt64 {
+            let proc = processes[index]
+            if let cached = memo[proc.pid] { return cached }
+            var sum = proc.cpuNanos
+            for child in childIndexes[proc.pid] ?? [] {
+                sum &+= total(child)
+            }
+            memo[proc.pid] = sum
+            return sum
+        }
+        for index in processes.indices { _ = total(index) }
+        return memo
     }
 
     public func lastActive(for pid: pid_t) -> Date? {

@@ -5,8 +5,9 @@ final class TurnDetectorTests: XCTestCase {
 
     private let start = Date(timeIntervalSince1970: 2000)
 
-    private func proc(pid: pid_t, cpuNanos: UInt64) -> ScannedProcess {
-        ScannedProcess(pid: pid, ppid: 1, name: "claude", path: "/usr/bin/claude",
+    private func proc(pid: pid_t, ppid: pid_t = 1, name: String = "claude",
+                      cpuNanos: UInt64) -> ScannedProcess {
+        ScannedProcess(pid: pid, ppid: ppid, name: name, path: "/usr/bin/\(name)",
                        cpuNanos: cpuNanos, startTime: start, cwd: "")
     }
 
@@ -74,6 +75,67 @@ final class TurnDetectorTests: XCTestCase {
             self.start
         }
         XCTAssertFalse(working.contains(6))
+    }
+
+    /// The agent process idles while its tool subprocess burns CPU (a build,
+    /// a test run): the subtree makes the agent read as working (issue #20).
+    func testChildProcessCPUCountsTowardAgent() {
+        let detector = TurnDetector()
+        _ = detector.update(processes: [
+            proc(pid: 10, cpuNanos: 500_000_000),
+            proc(pid: 11, ppid: 10, name: "zsh", cpuNanos: 0),
+        ], now: start)
+        // Agent CPU flat, child burns a full core-second.
+        let working = detector.update(processes: [
+            proc(pid: 10, cpuNanos: 500_000_000),
+            proc(pid: 11, ppid: 10, name: "zsh", cpuNanos: 1_000_000_000),
+        ], now: start.addingTimeInterval(1))
+        XCTAssertTrue(working.contains(10))
+    }
+
+    /// A grandchild counts too: agent -> shell -> compiler.
+    func testGrandchildCPUCountsTowardAgent() {
+        let detector = TurnDetector()
+        let quiet: [ScannedProcess] = [
+            proc(pid: 20, cpuNanos: 0),
+            proc(pid: 21, ppid: 20, name: "zsh", cpuNanos: 0),
+            proc(pid: 22, ppid: 21, name: "swift", cpuNanos: 0),
+        ]
+        _ = detector.update(processes: quiet, now: start)
+        let working = detector.update(processes: [
+            proc(pid: 20, cpuNanos: 0),
+            proc(pid: 21, ppid: 20, name: "zsh", cpuNanos: 0),
+            proc(pid: 22, ppid: 21, name: "swift", cpuNanos: 2_000_000_000),
+        ], now: start.addingTimeInterval(1))
+        XCTAssertTrue(working.contains(20))
+    }
+
+    /// A child exiting shrinks the subtree sum; that must read as "no burst
+    /// this tick", never as a counter reset that marks the agent working.
+    func testChildExitDoesNotMarkWorking() {
+        var config = TurnDetector.Config()
+        config.stickySeconds = 8
+        let detector = TurnDetector(config: config)
+        _ = detector.update(processes: [
+            proc(pid: 30, cpuNanos: 0),
+            proc(pid: 31, ppid: 30, name: "zsh", cpuNanos: 5_000_000_000),
+        ], now: start)
+        let working = detector.update(
+            processes: [proc(pid: 30, cpuNanos: 0)],
+            now: start.addingTimeInterval(20))
+        XCTAssertFalse(working.contains(30))
+    }
+
+    /// A transcript write two minutes old is still inside the widened window:
+    /// a single tool call appends nothing while it runs (issue #20).
+    func testTranscriptWriteWithinWidenedWindowMarksWorking() {
+        let detector = TurnDetector()
+        let p = proc(pid: 12, cpuNanos: 0)
+        _ = detector.update(processes: [p], now: start)
+        let working = detector.update(processes: [p], now: start.addingTimeInterval(130)) { _ in
+            self.start.addingTimeInterval(10)
+        }
+        XCTAssertTrue(working.contains(12))
     }
 
     func testFirstObservationIsIdle() {
