@@ -10,7 +10,7 @@ final class SessionScanner {
     struct Intent {
         var restNow: Bool
         var pinnedUntil: Date?
-        var reviewing: Bool
+        var keepScreenOn: Bool
         var now: Date
     }
 
@@ -74,7 +74,7 @@ final class SessionScanner {
         let input = PowerInputs(
             restNow: intent.restNow,
             pinnedUntil: intent.pinnedUntil,
-            reviewing: intent.reviewing,
+            keepScreenOn: intent.keepScreenOn,
             agentHolds: result.agentHolds,
             processHolds: result.processHolds,
             workingCount: result.workingSessionCount,

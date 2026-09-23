@@ -10,7 +10,7 @@ public final class PowerAssertion {
     public enum Kind {
         /// Keep the whole system awake (the machine does not idle-sleep).
         case systemSleep
-        /// Keep the display on (used only while the user is reviewing).
+        /// Keep the display on (the screen modifier).
         case displaySleep
 
         var typeName: String {

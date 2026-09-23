@@ -22,11 +22,36 @@ final class PowerEngineTests: XCTestCase {
         XCTAssertEqual(d.workingCount, 2)
     }
 
-    func testReviewingHoldsDisplayToo() {
-        let d = decidePower(PowerInputs(reviewing: true, now: now))
+    /// The screen modifier with nothing else holding acts as an until-off
+    /// hold with the display lit (the old "Screen on" behavior, kept).
+    func testScreenOnAloneHoldsSystemAndDisplay() {
+        let d = decidePower(PowerInputs(keepScreenOn: true, now: now))
         XCTAssertTrue(d.systemHold)
         XCTAssertTrue(d.displayHold)
         XCTAssertEqual(d.iconState, .reviewing)
+        XCTAssertEqual(d.reasons.first, "Screen on until you turn it off")
+    }
+
+    /// As a modifier on live agent work: the display joins the hold, and the
+    /// icon still reports working, not reviewing.
+    func testScreenOnModifiesAgentHold() {
+        let d = decidePower(PowerInputs(keepScreenOn: true,
+                                        agentHolds: ["Claude Code (2 working)"],
+                                        workingCount: 2, now: now))
+        XCTAssertTrue(d.systemHold)
+        XCTAssertTrue(d.displayHold)
+        XCTAssertEqual(d.iconState, .working)
+        XCTAssertFalse(d.reasons.contains("Screen on until you turn it off"))
+    }
+
+    /// As a modifier on a pin: the pin owns the state, the display rides along.
+    func testScreenOnModifiesPin() {
+        let d = decidePower(PowerInputs(pinnedUntil: now.addingTimeInterval(7200),
+                                        keepScreenOn: true, now: now))
+        XCTAssertTrue(d.systemHold)
+        XCTAssertTrue(d.displayHold)
+        XCTAssertEqual(d.iconState, .holding)
+        XCTAssertEqual(d.reasons.first, "Awake for another 120 min")
     }
 
     func testPinAloneHolds() {
@@ -60,7 +85,7 @@ final class PowerEngineTests: XCTestCase {
         let d = decidePower(PowerInputs(
             restNow: true,
             pinnedUntil: .distantFuture,
-            reviewing: true,
+            keepScreenOn: true,
             agentHolds: ["Claude Code (5 working)"],
             processHolds: ["ffmpeg running"],
             workingCount: 5,

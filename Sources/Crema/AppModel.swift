@@ -13,7 +13,7 @@ final class AppModel: ObservableObject {
     @Published var rules: [Rule] = Rule.defaults()
 
     // User intent.
-    @Published private(set) var reviewing = false
+    @Published private(set) var keepScreenOn = false
     @Published private(set) var pinnedUntil: Date?
     @Published private(set) var pinnedMinutes: Int?     // chosen finite duration, for chip highlight
     @Published private(set) var restNow = false
@@ -59,15 +59,17 @@ final class AppModel: ObservableObject {
         tick()
     }
 
-    func toggleReviewing() {
-        reviewing.toggle()
-        if reviewing { restNow = false }
+    /// The screen modifier: keep the display lit while anything holds the Mac
+    /// awake. On with nothing else holding, it is an until-off hold by itself.
+    func setScreenOn(_ on: Bool) {
+        keepScreenOn = on
+        if on { restNow = false }
         tick()
     }
 
     func rest() {
         restNow = true
-        reviewing = false
+        keepScreenOn = false
         pinnedUntil = nil
         pinnedMinutes = nil
         tick()
@@ -108,7 +110,7 @@ final class AppModel: ObservableObject {
 
         let rules = self.rules
         let intent = SessionScanner.Intent(
-            restNow: restNow, pinnedUntil: pinnedUntil, reviewing: reviewing, now: Date()
+            restNow: restNow, pinnedUntil: pinnedUntil, keepScreenOn: keepScreenOn, now: Date()
         )
 
         Task.detached(priority: .utility) { [weak self, scanEngine] in
@@ -144,25 +146,30 @@ final class AppModel: ObservableObject {
         if holdFailed {
             return "Could not hold the Mac awake. Check Energy settings or permissions."
         }
+        let base: String
         switch decision.iconState {
         case .idle:
-            return "Everything is waiting on you. Mac sleeps normally."
+            base = "Everything is waiting on you. Mac sleeps normally."
         case .working:
             // A batch-rule hold (e.g. ffmpeg) drives .working with zero agents;
             // fall back to its reason instead of "0 agents working".
             if decision.workingCount == 0 {
-                return decision.reasons.first.map { "\($0). Mac stays awake." } ?? "Mac stays awake."
+                base = decision.reasons.first.map { "\($0). Mac stays awake." } ?? "Mac stays awake."
+            } else {
+                base = decision.workingCount == 1
+                    ? "1 agent working. Mac stays awake."
+                    : "\(decision.workingCount) agents working. Mac stays awake."
             }
-            return decision.workingCount == 1
-                ? "1 agent working. Mac stays awake."
-                : "\(decision.workingCount) agents working. Mac stays awake."
         case .holding:
-            return decision.reasons.first ?? "Holding this Mac awake."
+            base = decision.reasons.first ?? "Holding this Mac awake."
         case .reviewing:
-            return "Screen on. Mac stays awake, screen won't dim."
+            base = "Screen on. Mac stays awake, screen won't dim."
         case .suppressed:
-            return "Paused. Crema won't keep the Mac awake until you resume."
+            base = "Paused. Crema won't keep the Mac awake until you resume."
         }
+        // The screen modifier is worth a word wherever it is not the headline.
+        return decision.displayHold && decision.iconState != .reviewing
+            ? base + " · screen on" : base
     }
 
     var workingCount: Int { sessions.filter(\.isWorking).count }

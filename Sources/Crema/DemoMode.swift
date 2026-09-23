@@ -15,10 +15,10 @@ enum DemoMode {
         ProcessInfo.processInfo.environment["CREMA_SCREENSHOT"]
     }
 
-    /// True while producing the marketing PNG. PopoverView swaps the AppKit
-    /// switch for a SwiftUI lookalike then: ImageRenderer draws only pure
-    /// SwiftUI, an NSViewRepresentable-backed control comes out as a
-    /// placeholder.
+    /// True while producing the marketing PNG. PopoverView swaps the
+    /// AppKit-backed controls (switch, checkbox, menu) for SwiftUI lookalikes
+    /// then: ImageRenderer draws only pure SwiftUI, an
+    /// NSViewRepresentable-backed control comes out as a placeholder.
     static var isScreenshotRun: Bool { enabled && screenshotPath != nil }
 
     static func sessions(now: Date = Date()) -> [AgentSession] {
@@ -75,6 +75,28 @@ enum DemoMode {
             return
         }
         try? png.write(to: URL(fileURLWithPath: path))
+    }
+}
+
+/// Pure-SwiftUI stand-in for the checkbox, only for screenshot renders.
+struct DemoCheckbox: View {
+    let on: Bool
+    let tint: Color
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 3.5)
+                .fill(on ? tint : Color.clear)
+                .frame(width: 13, height: 13)
+            RoundedRectangle(cornerRadius: 3.5)
+                .stroke(on ? tint : Color.secondary.opacity(0.5), lineWidth: 1.2)
+                .frame(width: 13, height: 13)
+            if on {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(.white)
+            }
+        }
     }
 }
 
