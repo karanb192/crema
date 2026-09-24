@@ -14,7 +14,10 @@ public enum IconState: String, Equatable {
 public struct PowerInputs: Equatable {
     public var restNow: Bool
     public var pinnedUntil: Date?      // nil = no pin, .distantFuture = infinite
-    public var reviewing: Bool
+    /// The screen modifier: whatever is holding the Mac awake also keeps the
+    /// display lit. On its own (nothing else holding) it acts as an
+    /// until-you-turn-it-off hold with the display lit.
+    public var keepScreenOn: Bool
     public var agentHolds: [String]
     public var processHolds: [String]
     public var workingCount: Int
@@ -25,7 +28,7 @@ public struct PowerInputs: Equatable {
 
     public init(restNow: Bool = false,
                 pinnedUntil: Date? = nil,
-                reviewing: Bool = false,
+                keepScreenOn: Bool = false,
                 agentHolds: [String] = [],
                 processHolds: [String] = [],
                 workingCount: Int = 0,
@@ -33,7 +36,7 @@ public struct PowerInputs: Equatable {
                 now: Date = Date()) {
         self.restNow = restNow
         self.pinnedUntil = pinnedUntil
-        self.reviewing = reviewing
+        self.keepScreenOn = keepScreenOn
         self.agentHolds = agentHolds
         self.processHolds = processHolds
         self.workingCount = workingCount
@@ -52,10 +55,13 @@ public struct PowerDecision: Equatable {
 }
 
 /// The precedence ladder, as one pure function:
-///   1. Pause            -> suppress everything
-///   2. Pin / Screen on  -> your intent, survives agents finishing
+///   1. Pause  -> suppress everything
+///   2. Pin    -> your intent, survives agents finishing
 ///   3. Agent + batch rules
 ///   4. Nothing active -> the Mac sleeps normally
+/// The screen modifier rides on top: it never decides WHETHER the Mac stays
+/// awake (except alone, where it acts as an infinite hold), only whether the
+/// display stays lit while something does.
 public func decidePower(_ input: PowerInputs) -> PowerDecision {
     if input.restNow {
         return PowerDecision(systemHold: false, displayHold: false,
@@ -64,28 +70,28 @@ public func decidePower(_ input: PowerInputs) -> PowerDecision {
     }
 
     let pinActive = input.pinnedUntil.map { $0 > input.now } ?? false
+    let ruleHold = !input.agentHolds.isEmpty || !input.processHolds.isEmpty
+    let screenOnAlone = input.keepScreenOn && !pinActive && !ruleHold && !input.graceActive
+
     var reasons: [String] = []
     if pinActive { reasons.append(pinReason(until: input.pinnedUntil!, now: input.now)) }
-    if input.reviewing { reasons.append("Screen on, no dimming") }
+    if screenOnAlone { reasons.append("Screen on until you turn it off") }
     reasons.append(contentsOf: input.agentHolds)
     reasons.append(contentsOf: input.processHolds)
     if input.graceActive && input.agentHolds.isEmpty {
         reasons.append("Agents just finished, Mac can sleep soon")
     }
 
-    let ruleHold = !input.agentHolds.isEmpty || !input.processHolds.isEmpty
-    let systemHold = pinActive || input.reviewing || ruleHold || input.graceActive
-    let displayHold = input.reviewing
+    let systemHold = pinActive || input.keepScreenOn || ruleHold || input.graceActive
+    let displayHold = input.keepScreenOn
 
     let iconState: IconState
     if !systemHold {
         iconState = .idle
-    } else if input.reviewing {
+    } else if ruleHold {
+        iconState = .working   // live work wins the icon, screen modifier or not
+    } else if screenOnAlone {
         iconState = .reviewing
-    } else if !input.agentHolds.isEmpty {
-        iconState = .working
-    } else if !input.processHolds.isEmpty {
-        iconState = .working   // a batch tool is actively running
     } else {
         iconState = .holding   // a pin, timer, or grace window with no live work
     }

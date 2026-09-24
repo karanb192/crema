@@ -168,30 +168,28 @@ struct PopoverView: View {
         .opacity(session.isWorking ? 1 : 0.65)
     }
 
-    /// Manual holds. Every chip is a toggle: click to hold, click again to
-    /// stop. Active finite pins show the time remaining in place of the
-    /// duration so the label doubles as the countdown.
+    /// Manual holds, two axes. The chip row is the duration: quick presets
+    /// plus a menu carrying the longer holds and "Until I turn it off". The
+    /// checkbox beneath is the screen modifier. Every chip is a toggle: click
+    /// to hold, click again to stop; active pins count down in place.
+    private let quickPins = [30, 60, 120]
+    private static let menuPins = [180, 240, 360, 480]
+
     private var footer: some View {
         VStack(alignment: .leading, spacing: 7) {
             Text("Keep awake")
                 .font(.system(size: 10.5))
                 .foregroundStyle(.secondary)
             HStack(spacing: 6) {
-                chip("Screen on", active: model.reviewing) { model.toggleReviewing() }
-                    .help("Keep the Mac awake and the screen from dimming, until you turn it off")
-                chip(pinChipTitle(minutes: 30, idle: "30 min"), active: isPinned(minutes: 30)) {
-                    isPinned(minutes: 30) ? model.clearPin() : model.pin(minutes: 30)
+                ForEach(quickPins, id: \.self) { minutes in
+                    chip(pinChipTitle(minutes: minutes), active: isPinned(minutes: minutes)) {
+                        isPinned(minutes: minutes) ? model.clearPin() : model.pin(minutes: minutes)
+                    }
+                    .help("Keep the Mac awake for \(Self.durationHelp(minutes)), whatever agents do")
                 }
-                .help("Keep the Mac awake for 30 minutes, whatever agents do")
-                chip(pinChipTitle(minutes: 60, idle: "1 hr"), active: isPinned(minutes: 60)) {
-                    isPinned(minutes: 60) ? model.clearPin() : model.pin(minutes: 60)
-                }
-                .help("Keep the Mac awake for 1 hour, whatever agents do")
-                chip("Until off", active: isInfinitePin()) {
-                    isInfinitePin() ? model.clearPin() : model.pin(minutes: nil)
-                }
-                .help("Keep the Mac awake until you turn it off")
+                moreChip
             }
+            screenOnRow
             HStack {
                 Button("Pause Crema") { model.rest() }
                     .buttonStyle(.plain)
@@ -210,11 +208,100 @@ struct PopoverView: View {
         .padding(.vertical, 11)
     }
 
-    /// "30 min" when idle, "22 min" (remaining) while that pin is running.
-    private func pinChipTitle(minutes: Int, idle: String) -> String {
-        guard isPinned(minutes: minutes), let until = model.pinnedUntil else { return idle }
+    /// The longer durations and the infinite hold live in a menu, so the chip
+    /// row stays four wide and "Until I turn it off" never again sits next to
+    /// the screen control looking like its twin. While one of its durations
+    /// runs, this chip is the countdown and the menu leads with "Turn off".
+    private var moreChip: some View {
+        Group {
+            if DemoMode.isScreenshotRun {
+                chip(moreChipTitle, active: menuPinActive) {}
+            } else {
+                Menu {
+                    if menuPinActive {
+                        Button("Turn off") { model.clearPin() }
+                        Divider()
+                    }
+                    ForEach(Self.menuPins, id: \.self) { minutes in
+                        Button("\(minutes / 60) hours") { model.pin(minutes: minutes) }
+                    }
+                    Divider()
+                    Button("Until I turn it off") { model.pin(minutes: nil) }
+                } label: {
+                    Text(moreChipTitle)
+                        .font(.system(size: 11.5, weight: .medium))
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 4)
+                }
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+                .menuIndicator(.hidden)
+                .background(menuPinActive ? crema.opacity(0.16) : Color.secondary.opacity(0.1))
+                .foregroundStyle(menuPinActive ? crema : Color.primary)
+                .clipShape(RoundedRectangle(cornerRadius: 7))
+                .help("Longer holds: 3 to 8 hours, or until you turn it off")
+            }
+        }
+    }
+
+    private var screenOnRow: some View {
+        HStack(spacing: 7) {
+            if DemoMode.isScreenshotRun {
+                DemoCheckbox(on: model.keepScreenOn, tint: crema)
+                Text("Keep the screen on too")
+                    .font(.system(size: 11.5))
+            } else {
+                Toggle(isOn: Binding(
+                    get: { model.keepScreenOn },
+                    set: { model.setScreenOn($0) }
+                )) {
+                    Text("Keep the screen on too")
+                        .font(.system(size: 11.5))
+                }
+                .toggleStyle(.checkbox)
+            }
+            Spacer()
+        }
+        .help("The screen stays lit while anything holds the Mac awake. Without this, the screen can dim and lock while the Mac works underneath.")
+    }
+
+    private var menuPinActive: Bool {
+        if isInfinitePin() { return true }
+        if let minutes = model.pinnedMinutes { return Self.menuPins.contains(minutes) }
+        return false
+    }
+
+    private var moreChipTitle: String {
+        if isInfinitePin() { return "Until off" }
+        if let minutes = model.pinnedMinutes, Self.menuPins.contains(minutes),
+           let until = model.pinnedUntil {
+            return Self.remainingLabel(until: until)
+        }
+        return "More ▾"
+    }
+
+    /// "30 min" / "1 hr" / "2 hr" when idle; the remaining time while running.
+    private func pinChipTitle(minutes: Int) -> String {
+        guard isPinned(minutes: minutes), let until = model.pinnedUntil else {
+            return Self.durationLabel(minutes)
+        }
+        return Self.remainingLabel(until: until)
+    }
+
+    private static func durationLabel(_ minutes: Int) -> String {
+        minutes < 60 ? "\(minutes) min" : "\(minutes / 60) hr"
+    }
+
+    private static func durationHelp(_ minutes: Int) -> String {
+        if minutes < 60 { return "\(minutes) minutes" }
+        return minutes == 60 ? "1 hour" : "\(minutes / 60) hours"
+    }
+
+    private static func remainingLabel(until: Date) -> String {
         let remaining = max(1, Int((until.timeIntervalSinceNow + 59) / 60.0))
-        return "\(remaining) min"
+        if remaining < 60 { return "\(remaining) min" }
+        let hours = remaining / 60, minutes = remaining % 60
+        return minutes == 0 ? "\(hours) h" : "\(hours) h \(minutes) m"
     }
 
     // MARK: - Bits
