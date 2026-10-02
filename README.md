@@ -1,6 +1,6 @@
 # Crema
 
-**Keep your Mac awake while your AI coding agents are working, and let it sleep the moment they are done.**
+**Keep your Mac awake while your AI coding agents work, then release the hold after they go quiet.**
 
 <p align="center"><img src="assets/hero.png" width="520" alt="Crema popover: sessions marked working or waiting per agent, manual keep-awake holds below"></p>
 
@@ -13,11 +13,11 @@ The old keep-awake tools answer the wrong question. They know whether *you* clic
 ## What it does
 
 - **Shows its receipts.** A rolling ledger in the popover: how long Crema actually held the Mac awake over the last day, and how many times it let go. A keep-awake app should be able to prove it lets your Mac sleep.
-- **Holds the Mac awake while any watched agent is mid-turn.** When every agent goes quiet, a short grace window runs out and the Mac is free to sleep. Per session, not per app: one agent working keeps you awake while the rest sit idle.
-- **Shows working vs waiting.** The popover lists each session, its folder, and whether it is working or waiting for you. The menu bar count is agents mid-turn. When it hits zero, everything is waiting on you.
-- **Hold it yourself too.** All agents finished but you are still reading the diff? Keep the Mac awake for 30 minutes, 1, 2, 3, 4, 6, or 8 hours, or until you turn it off. A separate switch keeps the screen from dimming while anything holds, agents included.
-- **Pause.** One click and Crema stops holding; the Mac sleeps on its normal schedule until you resume.
-- **Watches any process, not just agents.** ffmpeg, rsync, a long build: add a rule for "while it runs." Agents get "while it is working."
+- **Holds the Mac awake while it detects agent activity.** After every agent reads as waiting, a 10-minute grace window runs out and Crema releases its automatic hold. A manual hold, the screen switch, or a running batch rule can keep it awake longer.
+- **Shows working vs waiting.** The popover lists each detected session, its folder, and its estimated activity. The menu bar count is sessions currently marked working.
+- **Hold it yourself too.** All agents finished but you are still reading the diff? Keep the Mac awake for 30 minutes, 1, 2, 3, 4, 6, or 8 hours, or until you turn it off. The screen switch keeps both the Mac and its display awake until you switch it off, even after a timer ends.
+- **Pause.** One click releases Crema's holds immediately, even during a scan. The Mac sleeps on its normal schedule until you resume. Timers and the screen switch also take effect during a scan.
+- **Watches batch jobs too.** The built-in ffmpeg rule holds while the process runs. Adding another process currently requires a source change to [`Rule.defaults()`](Sources/CremaCore/Rule.swift). There is no custom-rule editor in the app yet.
 
 Claude Code ships as a preset that is on by default. Nothing to configure before it is useful.
 
@@ -59,11 +59,11 @@ The cup appears in your menu bar. There is no Dock icon and no window; it is a b
 
 ## How it works
 
-- **Power** is a single [`IOPMAssertionCreateWithName`](https://developer.apple.com/documentation/iokit/1557134-iopmassertioncreatewithname) assertion, the same call `caffeinate` makes. One assertion, many reasons.
-- **Turn detection** has two signals. For Claude Code, Crema watches the session transcript files it appends to while mid-turn (`~/.claude/projects`), which stays precise even when the agent is network-bound and burning no CPU. Every other agent, preset or custom, uses a CPU heuristic via `libproc`: an agent mid-turn burns CPU and spawns tool subprocesses, a waiting agent sits near zero, and a short sticky window keeps streaming pauses from flapping the state.
+- **Power** uses [`IOPMAssertionCreateWithName`](https://developer.apple.com/documentation/iokit/1557134-iopmassertioncreatewithname), the same call `caffeinate` makes. Crema holds one system-sleep assertion and, when the screen switch is on, one display-sleep assertion.
+- **Turn detection** estimates activity from CPU use and recent transcript writes. Claude Code gets the transcript signal when its working directory belongs to one watched agent process. Shared directories and other agents use CPU activity. Both signals can miss long, quiet steps. A short sticky window keeps brief pauses from changing the state repeatedly.
 - **Attribution** walks each process for its working directory, so a session shows as its folder, not a bare pid.
 
-The engine lives in `CremaCore` and is covered by unit tests, including an integration test that creates a real assertion and confirms macOS lists it via `pmset -g assertions`.
+The engine lives in `CremaCore` and is covered by unit tests, including an integration test that creates a real assertion and confirms macOS lists it via `pmset -g assertions`. App tests hold a scan open to check that Pause, timers, the screen switch, and rule changes survive its completion. The awake ledger records confirmed system holds, including when macOS refuses a requested hold.
 
 ```bash
 make test
@@ -71,7 +71,7 @@ make test
 
 ## Agents supported
 
-Presets ship for the agents below. Claude Code gets the precise per-session turn signal (transcript writes); the rest currently use the CPU heuristic, with their precise signals on the roadmap. Anything else you name in a custom rule works through the CPU signal too.
+Presets ship for the agents below and are enabled by default. Claude Code uses recent transcript writes when its working directory is unambiguous. The others use CPU activity. Custom agent rules added in source also use CPU activity.
 
 | Agent | Process | Preset |
 | --- | --- | --- |
@@ -86,7 +86,7 @@ Presets ship for the agents below. Claude Code gets the precise per-session turn
 
 Known gaps, stated here so you do not find them the hard way:
 
-- Precise turn detection is Claude Code only today. Codex, Gemini, Copilot and opencode run on the CPU heuristic, which is right most of the time but can misread a long network wait as idle.
+- Working and waiting are estimates. A long network wait or quiet tool call can read as waiting, including for Claude Code. Multiple watched agents in one directory use CPU activity only. Use a manual hold when a long unattended job must stay awake.
 - Closing the lid sleeps the Mac. That is macOS: no app-level assertion survives a lid close on battery. Lid open or clamshell mode (external display plus power) are the supported shapes. A lid-closed mode would need a privileged helper; if it ships, it ships with the turn-state auto-release so a Mac in a bag cannot cook itself.
 - Crema only sees its own holds. A stray hand-started caffeinate or another app's assertion is invisible to it for now; the radar for that is the top roadmap item.
 - Apple Silicon only, macOS 13+.
