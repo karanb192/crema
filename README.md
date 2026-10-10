@@ -8,6 +8,8 @@ Crema is a menu bar app for macOS. It is a `caffeinate` you can actually see, an
 
 The old keep-awake tools answer the wrong question. They know whether *you* clicked a toggle. They do not know whether Claude Code is mid-turn in one window while three others sit waiting for your next prompt. Crema does.
 
+Crema never asks for your password. It installs no sudo rule, no background helper and no agent hooks. It watches processes, reads the transcripts Claude Code already writes, and makes the same keep-awake call `caffeinate` makes. `brew install` is the whole setup.
+
 > How do I keep my Mac awake while Claude Code (or Codex, or Gemini) runs, without leaving it awake all night? That is the question Crema exists to answer.
 
 ## What it does
@@ -25,7 +27,7 @@ Claude Code ships as a preset that is on by default. Nothing to configure before
 
 <p align="center"><img src="assets/demo.gif" width="640" alt="Crema demo: the popover lists sessions working and waiting, the count drains to zero, the Mac sleeps"></p>
 
-## Why not just use caffeinate, Amphetamine, or KeepingYouAwake?
+## Why not just use caffeinate, Amphetamine, KeepingYouAwake, or Adrafinil?
 
 | Tool | What it does | What it misses |
 | --- | --- | --- |
@@ -33,8 +35,15 @@ Claude Code ships as a preset that is on by default. Nothing to configure before
 | [Amphetamine](https://apps.apple.com/us/app/amphetamine/id937984704) | Rich triggers, including "while an app runs." | Manages only its own assertion. No per-session agent view. |
 | [KeepingYouAwake](https://github.com/newmarcel/KeepingYouAwake) | A clean menu bar toggle over caffeinate. | A toggle, not a monitor. It cannot tell working from waiting. |
 | [Caffeine](https://www.caffeine-app.net/) | The 2006 original. On or off. | Same. |
+| [Adrafinil](https://github.com/kageroumado/adrafinil) | The closest match. Knows when an agent turn starts and ends, and can keep a closed lid awake. | The turn signal comes from hooks it installs into each agent, and the closed-lid mode runs `pmset disablesleep` as root. |
 
-None of them know the difference between an agent working and an agent waiting for you, which for an all-day agent user is the whole question.
+The first four cannot tell an agent working from one waiting for you, which for an all-day agent user is the whole question. Adrafinil can, and it is the pick if you want the lid shut. Crema gets there by watching, with no root and nothing installed into your agents. The cost is that watching is an estimate (see [Limits](#limits)).
+
+## Leave the lid open
+
+On battery, macOS sleeps a MacBook when the lid closes, whatever app-level holds say. Getting past that takes root, which is why Crema does not try. A shut laptop that stays awake also tends to end up in a bag or on a bed with an agent still running and nothing cooling it. Apple asks for [a stable surface with good ventilation](https://support.apple.com/en-us/102336).
+
+An agent run does not need the lid shut. Leave the laptop open on the desk and let the screen sleep. Crema holds only the system awake unless you turn on the screen switch. Clamshell mode (lid closed, external display and power) works as usual.
 
 ## Install
 
@@ -87,7 +96,7 @@ Presets ship for the agents below and are enabled by default. Claude Code uses r
 Known gaps, stated here so you do not find them the hard way:
 
 - Working and waiting are estimates. A long network wait or quiet tool call can read as waiting, including for Claude Code. Multiple watched agents in one directory use CPU activity only. Use a manual hold when a long unattended job must stay awake.
-- Closing the lid sleeps the Mac. That is macOS: no app-level assertion survives a lid close on battery. Lid open or clamshell mode (external display plus power) are the supported shapes. A lid-closed mode would need a privileged helper; if it ships, it ships with the turn-state auto-release so a Mac in a bag cannot cook itself.
+- Closing the lid on battery sleeps the Mac, by design. Lid open or clamshell mode are the supported shapes. See [Leave the lid open](#leave-the-lid-open).
 - Crema only sees its own holds. A stray hand-started caffeinate or another app's assertion is invisible to it for now; the radar for that is the top roadmap item.
 - Apple Silicon only, macOS 13+.
 
