@@ -1,38 +1,24 @@
 import Foundation
 import CremaCore
 
-/// Owns the scan pipeline and runs it OFF the main actor, so the 5-second scan
-/// (a full process walk plus a transcript directory read per Claude session)
-/// never blocks the UI. All mutable state here (the turn detector, the grace
-/// timestamp) is touched only from `run(...)`, which AppModel calls strictly
-/// one at a time, so access stays serial without locking.
-final class SessionScanner {
-    struct Intent {
-        var restNow: Bool
-        var pinnedUntil: Date?
-        var keepScreenOn: Bool
-        var now: Date
-    }
+protocol SessionScanning {
+    func run(rules: [Rule], now: Date) -> SessionScanner.Output
+}
 
+/// Called serially off the main actor. Power controls are applied separately
+/// so a slow scan cannot overwrite a newer user choice.
+final class SessionScanner: SessionScanning {
     struct Output {
-        var sessions: [AgentSession]
-        var decision: PowerDecision
-        var runningBatchRuleIDs: [String]
+        var processes: [ScannedProcess] = []
+        var workingPIDs: Set<pid_t> = []
+        var lastActive: [pid_t: Date] = [:]
     }
 
     private let scanner = ProcessScanner()
     private let detector = TurnDetector()
-    private let engine = RuleEngine()
     private let activity = SessionActivityProbe()
-    private let graceSeconds: TimeInterval
-    private var lastAgentWorkingAt: Date?
 
-    init(graceSeconds: TimeInterval = 600) {
-        self.graceSeconds = graceSeconds
-    }
-
-    func run(rules: [Rule], intent: Intent) -> Output {
-        let now = intent.now
+    func run(rules: [Rule], now: Date) -> Output {
         var processes = scanner.snapshot()
 
         let agentRules = rules.filter { $0.enabled && $0.kind == .whileAgentWorking }
@@ -59,29 +45,12 @@ final class SessionScanner {
             return activity.lastClaudeWrite(cwd: proc.cwd)
         }
 
-        let result = engine.evaluate(rules: rules, processes: processes, workingPIDs: working)
-        let sessions = engine.sessions(
-            rules: rules, processes: processes, workingPIDs: working,
-            lastActive: { [detector] pid in detector.lastActive(for: pid) }
+        return Output(
+            processes: processes,
+            workingPIDs: working,
+            lastActive: Dictionary(uniqueKeysWithValues: processes.compactMap { process in
+                detector.lastActive(for: process.pid).map { (process.pid, $0) }
+            })
         )
-
-        if result.workingSessionCount > 0 { lastAgentWorkingAt = now }
-        let graceActive: Bool = {
-            guard result.agentHolds.isEmpty, let last = lastAgentWorkingAt else { return false }
-            return now.timeIntervalSince(last) <= graceSeconds
-        }()
-
-        let input = PowerInputs(
-            restNow: intent.restNow,
-            pinnedUntil: intent.pinnedUntil,
-            keepScreenOn: intent.keepScreenOn,
-            agentHolds: result.agentHolds,
-            processHolds: result.processHolds,
-            workingCount: result.workingSessionCount,
-            graceActive: graceActive,
-            now: now
-        )
-        return Output(sessions: sessions, decision: decidePower(input),
-                      runningBatchRuleIDs: result.runningBatchRuleIDs)
     }
 }

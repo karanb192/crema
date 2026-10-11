@@ -1,6 +1,13 @@
 import SwiftUI
 import CremaCore
 
+protocol PowerControlling {
+    func apply(_ decision: PowerDecision) -> Bool
+    var holdsSystem: Bool { get }
+}
+
+extension AssertionController: PowerControlling {}
+
 /// The app's single source of truth. A repeating timer kicks a scan that runs
 /// on a background thread (see SessionScanner); its result is published back on
 /// the main actor, which applies the power decision and drives the UI.
@@ -9,7 +16,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var sessions: [AgentSession] = []
     @Published private(set) var decision = decidePower(PowerInputs())
     @Published private(set) var runningBatchRuleIDs: [String] = []
-    @Published private(set) var ledger = AppModel.loadLedger()
+    @Published private(set) var ledger: HoldLedger
     @Published var rules: [Rule] = Rule.defaults()
 
     // User intent.
@@ -19,16 +26,31 @@ final class AppModel: ObservableObject {
     @Published private(set) var restNow = false
     @Published private(set) var holdFailed = false      // the OS refused an assertion we wanted
 
-    // Runs off the main actor; only ever entered from a serialized scan, so the
-    // unchecked isolation is safe (see `scanning`).
-    nonisolated(unsafe) private let scanEngine = SessionScanner()
-    private let controller = AssertionController()
+    // Only one detached scan can access the detector at a time.
+    nonisolated(unsafe) private let scanEngine: SessionScanning
+    private let controller: PowerControlling
+    private let defaults: UserDefaults
+    private let now: () -> Date
+    private let engine = RuleEngine()
+    private var latestScan = SessionScanner.Output()
+    private var lastAgentWorkingAt: Date?
+    private let graceSeconds: TimeInterval = 600
     private var timer: Timer?
-    private var scanning = false
+    private(set) var scanTask: Task<Void, Never>?
 
     private let scanInterval: TimeInterval = 5
 
-    init() {
+    init(scanEngine: SessionScanning = SessionScanner(),
+         controller: PowerControlling = AssertionController(),
+         defaults: UserDefaults = .standard,
+         now: @escaping () -> Date = Date.init,
+         startsAutomatically: Bool = true) {
+        self.scanEngine = scanEngine
+        self.controller = controller
+        self.defaults = defaults
+        self.now = now
+        self.ledger = Self.loadLedger(defaults: defaults)
+        guard startsAutomatically else { return }
         tick()
         let timer = Timer.scheduledTimer(withTimeInterval: scanInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
@@ -44,7 +66,7 @@ final class AppModel: ObservableObject {
         restNow = false
         holdFailed = false
         if let minutes {
-            pinnedUntil = Date().addingTimeInterval(Double(minutes) * 60)
+            pinnedUntil = now().addingTimeInterval(Double(minutes) * 60)
             pinnedMinutes = minutes
         } else {
             pinnedUntil = .distantFuture
@@ -98,33 +120,51 @@ final class AppModel: ObservableObject {
             return
         }
 
-        // Expire a finite pin (main-actor state) before scheduling the scan.
-        if let until = pinnedUntil, until <= Date(), until < .distantFuture {
+        applyPower()
+
+        // One scan at a time; a slow scan never stacks up behind the timer.
+        guard scanTask == nil else { return }
+
+        let rules = self.rules
+        let scannedAt = now()
+
+        scanTask = Task { [weak self, scanEngine] in
+            let output = await Task.detached(priority: .utility) {
+                scanEngine.run(rules: rules, now: scannedAt)
+            }.value
+            guard let self else { return }
+            self.latestScan = output
+            self.applyPower()
+            self.scanTask = nil
+        }
+    }
+
+    private func applyPower() {
+        let now = now()
+        if let until = pinnedUntil, until <= now, until < .distantFuture {
             pinnedUntil = nil
             pinnedMinutes = nil
         }
 
-        // One scan at a time; a slow scan never stacks up behind the timer.
-        guard !scanning else { return }
-        scanning = true
-
-        let rules = self.rules
-        let intent = SessionScanner.Intent(
-            restNow: restNow, pinnedUntil: pinnedUntil, keepScreenOn: keepScreenOn, now: Date()
+        let result = engine.evaluate(rules: rules, processes: latestScan.processes,
+                                     workingPIDs: latestScan.workingPIDs)
+        sessions = engine.sessions(
+            rules: rules, processes: latestScan.processes, workingPIDs: latestScan.workingPIDs,
+            lastActive: { latestScan.lastActive[$0] }
         )
+        runningBatchRuleIDs = result.runningBatchRuleIDs
+        if result.workingSessionCount > 0 { lastAgentWorkingAt = now }
+        let graceActive = result.agentHolds.isEmpty && lastAgentWorkingAt.map {
+            now.timeIntervalSince($0) <= graceSeconds
+        } == true
 
-        Task.detached(priority: .utility) { [weak self, scanEngine] in
-            let output = scanEngine.run(rules: rules, intent: intent)
-            await MainActor.run {
-                guard let self else { return }
-                self.holdFailed = !self.controller.apply(output.decision)
-                self.sessions = output.sessions
-                self.decision = output.decision
-                self.runningBatchRuleIDs = output.runningBatchRuleIDs
-                self.recordLedger(held: output.decision.systemHold)
-                self.scanning = false
-            }
-        }
+        decision = decidePower(PowerInputs(
+            restNow: restNow, pinnedUntil: pinnedUntil, keepScreenOn: keepScreenOn,
+            agentHolds: result.agentHolds, processHolds: result.processHolds,
+            workingCount: result.workingSessionCount, graceActive: graceActive, now: now
+        ))
+        holdFailed = !controller.apply(decision)
+        recordLedger(held: controller.holdsSystem)
     }
 
     // MARK: - Derived UI state
@@ -184,7 +224,7 @@ final class AppModel: ObservableObject {
     /// hour of history exists so it never shows "2 min of the last 2 min".
     var ledgerLine: String? {
         if DemoMode.enabled { return "Awake 2.9 h of the last 10 h · released 14 times" }
-        let s = ledger.summary()
+        let s = ledger.summary(now: now())
         guard s.spanSeconds >= 3600 else { return nil }
         let released = s.releaseCount == 1 ? "released once" : "released \(s.releaseCount) times"
         return "Awake \(Self.hours(s.heldSeconds)) of the last \(Self.hours(s.spanSeconds)) · \(released)"
@@ -192,15 +232,15 @@ final class AppModel: ObservableObject {
 
     private func recordLedger(held: Bool) {
         let before = ledger
-        ledger.record(held: held)
+        ledger.record(held: held, at: now())
         guard ledger != before else { return }
         if let data = try? JSONEncoder().encode(ledger) {
-            UserDefaults.standard.set(data, forKey: Self.ledgerKey)
+            defaults.set(data, forKey: Self.ledgerKey)
         }
     }
 
-    private static func loadLedger() -> HoldLedger {
-        guard let data = UserDefaults.standard.data(forKey: ledgerKey),
+    private static func loadLedger(defaults: UserDefaults) -> HoldLedger {
+        guard let data = defaults.data(forKey: ledgerKey),
               let stored = try? JSONDecoder().decode(HoldLedger.self, from: data) else {
             return HoldLedger()
         }

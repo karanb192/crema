@@ -21,5 +21,9 @@ let package = Package(
             name: "CremaCoreTests",
             dependencies: ["CremaCore"]
         ),
+        .testTarget(
+            name: "CremaTests",
+            dependencies: ["Crema", "CremaCore"]
+        ),
     ]
 )
