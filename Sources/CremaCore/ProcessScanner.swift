@@ -114,7 +114,7 @@ public struct ProcessScanner {
         let taskSize = Int32(MemoryLayout<proc_taskinfo>.size)
         let taskRet = proc_pidinfo(pid, PROC_PIDTASKINFO, 0, &task, taskSize)
         let cpuNanos: UInt64 = (taskRet == taskSize)
-            ? task.pti_total_user &+ task.pti_total_system
+            ? Self.nanos(fromTicks: task.pti_total_user &+ task.pti_total_system)
             : 0
 
         // cwd is left empty here and filled in lazily only for the few
@@ -125,6 +125,27 @@ public struct ProcessScanner {
             cpuNanos: cpuNanos, startTime: startTime,
             cwd: ""
         )
+    }
+
+    /// PROC_PIDTASKINFO reports CPU time in Mach absolute-time ticks, not
+    /// nanoseconds. On Intel a tick is 1 ns, but on Apple Silicon it is
+    /// 125/3 ns, so the raw value undercounts CPU about 41x and a process
+    /// pinning a full core reads as 0.024 cores.
+    private static let timebase: mach_timebase_info_data_t = {
+        var info = mach_timebase_info_data_t()
+        mach_timebase_info(&info)
+        return info
+    }()
+
+    static func nanos(fromTicks ticks: UInt64) -> UInt64 {
+        nanos(fromTicks: ticks, numer: timebase.numer, denom: timebase.denom)
+    }
+
+    /// Split so the multiply cannot overflow for any realistic CPU total.
+    static func nanos(fromTicks ticks: UInt64, numer: UInt32, denom: UInt32) -> UInt64 {
+        guard numer != denom, denom != 0 else { return ticks }
+        let n = UInt64(numer), d = UInt64(denom)
+        return (ticks / d) * n + (ticks % d) * n / d
     }
 
     /// Working directory via PROC_PIDVNODEPATHINFO. Works for same-user
