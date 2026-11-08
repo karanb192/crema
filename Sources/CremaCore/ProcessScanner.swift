@@ -13,16 +13,18 @@ public struct ScannedProcess: Equatable {
     public let name: String        // executable basename
     public let path: String        // full executable path
     public let cpuNanos: UInt64     // cumulative CPU time (user + system), nanoseconds
+    public let childCPUNanos: UInt64 // CPU of children this process has reaped, nanoseconds
     public let startTime: Date      // process start
     public var cwd: String          // best-effort working directory, "" if unavailable
 
     public init(pid: pid_t, ppid: pid_t, name: String, path: String = "",
-                cpuNanos: UInt64, startTime: Date, cwd: String) {
+                cpuNanos: UInt64, childCPUNanos: UInt64 = 0, startTime: Date, cwd: String) {
         self.pid = pid
         self.ppid = ppid
         self.name = name
         self.path = path
         self.cpuNanos = cpuNanos
+        self.childCPUNanos = childCPUNanos
         self.startTime = startTime
         self.cwd = cwd
     }
@@ -113,18 +115,48 @@ public struct ProcessScanner {
         var task = proc_taskinfo()
         let taskSize = Int32(MemoryLayout<proc_taskinfo>.size)
         let taskRet = proc_pidinfo(pid, PROC_PIDTASKINFO, 0, &task, taskSize)
-        let cpuNanos: UInt64 = (taskRet == taskSize)
-            ? task.pti_total_user &+ task.pti_total_system
-            : 0
+        // An unreadable counter drops the process from this scan, as a failed
+        // path or BSD read does. A guessed value would become a baseline that
+        // the next good reading is measured against.
+        guard taskRet == taskSize,
+              let cpuNanos = Self.nanos(fromTicks: task.pti_total_user &+ task.pti_total_system)
+        else { return nil }
+
+        // A child that starts and exits between two scans is never in a
+        // snapshot; its CPU only shows up in the parent's reaped total.
+        var usage = rusage_info_v2()
+        let usageRet = withUnsafeMutablePointer(to: &usage) {
+            $0.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) {
+                proc_pid_rusage(pid, RUSAGE_INFO_V2, $0)
+            }
+        }
+        guard usageRet == 0,
+              let childCPUNanos = Self.nanos(fromTicks: usage.ri_child_user_time &+ usage.ri_child_system_time)
+        else { return nil }
 
         // cwd is left empty here and filled in lazily only for the few
         // agent processes that need it, since resolving it for every process
         // on every scan is wasteful.
         return ScannedProcess(
             pid: pid, ppid: ppid, name: name, path: path,
-            cpuNanos: cpuNanos, startTime: startTime,
+            cpuNanos: cpuNanos, childCPUNanos: childCPUNanos, startTime: startTime,
             cwd: ""
         )
+    }
+
+    /// PROC_PIDTASKINFO and proc_pid_rusage report CPU time in Mach
+    /// absolute-time ticks, not nanoseconds. On Intel a tick is 1 ns, but on
+    /// Apple Silicon it is 125/3 ns, so raw values undercount CPU about 41x.
+    static func nanos(fromTicks ticks: UInt64) -> UInt64? {
+        guard let timebase = timebaseCache.value() else { return nil }
+        return nanos(fromTicks: ticks, numer: timebase.numer, denom: timebase.denom)
+    }
+
+    /// Split so the multiply cannot overflow for any realistic CPU total.
+    static func nanos(fromTicks ticks: UInt64, numer: UInt32, denom: UInt32) -> UInt64 {
+        guard numer != denom, denom != 0 else { return ticks }
+        let n = UInt64(numer), d = UInt64(denom)
+        return (ticks / d) * n + (ticks % d) * n / d
     }
 
     /// Working directory via PROC_PIDVNODEPATHINFO. Works for same-user
@@ -138,5 +170,24 @@ public struct ProcessScanner {
             let ptr = raw.bindMemory(to: CChar.self).baseAddress!
             return String(cString: ptr)
         }
+    }
+}
+
+/// Caches only a successful lookup, so a failed call is retried next scan
+/// instead of pinning the scanner to raw ticks.
+private let timebaseCache = TimebaseCache()
+
+private final class TimebaseCache: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cached: mach_timebase_info_data_t?
+
+    func value() -> mach_timebase_info_data_t? {
+        lock.lock()
+        defer { lock.unlock() }
+        if let cached { return cached }
+        var info = mach_timebase_info_data_t()
+        guard mach_timebase_info(&info) == KERN_SUCCESS, info.numer != 0, info.denom != 0 else { return nil }
+        cached = info
+        return info
     }
 }

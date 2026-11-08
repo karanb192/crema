@@ -1,9 +1,10 @@
 import Foundation
 
 /// The precise per-session turn signal: how recently an agent wrote to its own
-/// transcript. An agent mid-turn appends on every message and tool call, even
-/// while it is network-bound and burning almost no local CPU. An agent parked
-/// at a prompt does not write at all until you reply.
+/// transcript. An agent mid-turn appends as each message and tool result lands,
+/// even while it is network-bound and burning almost no local CPU, but appends
+/// nothing while a single tool call runs. An agent parked at a prompt does not
+/// write at all until you reply.
 ///
 /// Claude Code is implemented precisely here: it maps a session's working
 /// directory to its transcript folder under ~/.claude/projects. Other agents

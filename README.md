@@ -69,7 +69,7 @@ The cup appears in your menu bar. There is no Dock icon and no window; it is a b
 ## How it works
 
 - **Power** uses [`IOPMAssertionCreateWithName`](https://developer.apple.com/documentation/iokit/1557134-iopmassertioncreatewithname), the same call `caffeinate` makes. Crema holds one system-sleep assertion and, when the screen switch is on, one display-sleep assertion.
-- **Turn detection** estimates activity from CPU use and recent transcript writes. Claude Code gets the transcript signal when its working directory belongs to one watched agent process. Shared directories and other agents use CPU activity. Both signals can miss long, quiet steps. A short sticky window keeps brief pauses from changing the state repeatedly.
+- **Turn detection** estimates activity from the CPU an agent and the processes it started use, and from recent transcript writes. The agent's own CPU counts from 4% of a core; the processes it started count once they average a fifth of a core over 30 seconds, so brief helpers such as a status line do not. Claude Code gets the transcript signal when its working directory belongs to one watched agent process. Shared directories and other agents use CPU activity. Both signals can miss long, quiet steps. A short sticky window keeps brief pauses from changing the state repeatedly.
 - **Attribution** walks each process for its working directory, so a session shows as its folder, not a bare pid.
 
 The engine lives in `CremaCore` and is covered by unit tests, including an integration test that creates a real assertion and confirms macOS lists it via `pmset -g assertions`. App tests hold a scan open to check that Pause, timers, the screen switch, and rule changes survive its completion. The awake ledger records confirmed system holds, including when macOS refuses a requested hold.
@@ -95,7 +95,7 @@ Presets ship for the agents below and are enabled by default. Claude Code uses r
 
 Known gaps, stated here so you do not find them the hard way:
 
-- Working and waiting are estimates. A long network wait or quiet tool call can read as waiting, including for Claude Code. Multiple watched agents in one directory use CPU activity only. Use a manual hold when a long unattended job must stay awake.
+- Working and waiting are estimates. A long network wait, or a tool call whose processes average under a fifth of a core over 30 seconds, can read as waiting: for Claude Code after about 2.5 minutes without a transcript write, for agents watched by CPU within seconds. A busy background process an agent started, such as a dev server or a watcher, keeps that session working while it uses CPU. Multiple watched agents in one directory use CPU activity only. Use a manual hold when a long unattended job must stay awake.
 - Closing the lid on battery sleeps the Mac, by design. Lid open or clamshell mode are the supported shapes. See [Leave the lid open](#leave-the-lid-open).
 - Crema only sees its own holds. A stray hand-started caffeinate or another app's assertion is invisible to it for now; the radar for that is the top roadmap item.
 - Apple Silicon only, macOS 13+.
