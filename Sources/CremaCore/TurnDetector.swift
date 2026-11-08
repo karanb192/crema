@@ -75,6 +75,23 @@ public final class TurnDetector {
             var lastActive = previous?.lastActive ?? .distantPast
             var history = previous?.descendantHistory ?? []
 
+            // An unreadable counter skips this scan for the process: the last
+            // good sample stays, time included, so the next good reading spans
+            // the whole gap and is never measured against a bad baseline.
+            if !proc.cpuReadable {
+                if var kept = previous {
+                    if let written = lastWrite?(proc),
+                       now.timeIntervalSince(written) <= config.fileActiveWindow {
+                        kept.lastActive = max(kept.lastActive, now)
+                    }
+                    if now.timeIntervalSince(kept.lastActive) <= config.stickySeconds {
+                        working.insert(proc.pid)
+                    }
+                    live[proc.pid] = kept
+                }
+                continue
+            }
+
             if let prev = previous {
                 let elapsed = now.timeIntervalSince(prev.at)
                 if elapsed > 0 {
@@ -144,7 +161,7 @@ public final class TurnDetector {
 
         var selfOnly: [pid_t: UInt64] = [:]
         var withReaped: [pid_t: UInt64] = [:]
-        for proc in processes {
+        for proc in processes where proc.cpuReadable {
             if let prev = samples[proc.pid], prev.startTime == proc.startTime {
                 let own = proc.cpuNanos >= prev.ownNanos ? proc.cpuNanos - prev.ownNanos : 0
                 let reaped = proc.childCPUNanos >= prev.reapedNanos ? proc.childCPUNanos - prev.reapedNanos : 0

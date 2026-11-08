@@ -6,10 +6,10 @@ final class TurnDetectorTests: XCTestCase {
     private let start = Date(timeIntervalSince1970: 2000)
 
     private func proc(pid: pid_t, ppid: pid_t = 1, name: String = "claude",
-                      cpuNanos: UInt64, reaped: UInt64 = 0,
+                      cpuNanos: UInt64, reaped: UInt64 = 0, readable: Bool = true,
                       startedAt: Date? = nil) -> ScannedProcess {
         ScannedProcess(pid: pid, ppid: ppid, name: name, path: "/usr/bin/\(name)",
-                       cpuNanos: cpuNanos, childCPUNanos: reaped,
+                       cpuNanos: cpuNanos, childCPUNanos: reaped, cpuReadable: readable,
                        startTime: startedAt ?? start, cwd: "")
     }
 
@@ -288,7 +288,7 @@ final class TurnDetectorTests: XCTestCase {
         XCTAssertFalse(working.contains(74))
     }
 
-    /// A failed read reports a lower counter. The next good read must not
+    /// A lower counter can only be a bad read. The next good read must not
     /// count the process's whole CPU history as one interval.
     func testFailedReadDoesNotReplayLifetimeCPU() {
         let detector = TurnDetector()
@@ -298,6 +298,43 @@ final class TurnDetectorTests: XCTestCase {
             processes: [proc(pid: 76, cpuNanos: 100 * second, reaped: 100 * second)],
             now: start.addingTimeInterval(10))
         XCTAssertFalse(working.contains(76))
+    }
+
+    /// An unreadable first reading must not become the baseline the first
+    /// good reading is measured against.
+    func testUnreadableFirstReadingIsNotABaseline() {
+        let detector = TurnDetector()
+        _ = detector.update(processes: [proc(pid: 78, cpuNanos: 0, readable: false)], now: start)
+        _ = detector.update(processes: [proc(pid: 78, cpuNanos: 100 * second, reaped: 100 * second)],
+                            now: start.addingTimeInterval(5))
+        let working = detector.update(
+            processes: [proc(pid: 78, cpuNanos: 100 * second, reaped: 100 * second)],
+            now: start.addingTimeInterval(10))
+        XCTAssertFalse(working.contains(78))
+    }
+
+    /// After an unreadable scan, the next good reading is spread over the
+    /// whole gap, not charged to one interval.
+    func testUnreadableScanSpreadsCatchUpOverTheGap() {
+        let detector = TurnDetector()
+        _ = detector.update(processes: [proc(pid: 80, cpuNanos: 0)], now: start)
+        _ = detector.update(processes: [proc(pid: 80, cpuNanos: 0, readable: false)],
+                            now: start.addingTimeInterval(5))
+        // 0.25s over 10s is 0.025 cores, under the 0.04 bar.
+        let working = detector.update(
+            processes: [proc(pid: 80, cpuNanos: second / 4)],
+            now: start.addingTimeInterval(10))
+        XCTAssertFalse(working.contains(80))
+    }
+
+    /// An unreadable scan keeps a session with a fresh transcript working.
+    func testUnreadableScanKeepsTranscriptSignal() {
+        let detector = TurnDetector()
+        _ = detector.update(processes: [proc(pid: 82, cpuNanos: 0)], now: start)
+        let working = detector.update(
+            processes: [proc(pid: 82, cpuNanos: 0, readable: false)],
+            now: start.addingTimeInterval(5)) { _ in self.start.addingTimeInterval(4) }
+        XCTAssertTrue(working.contains(82))
     }
 
     /// A ppid cycle can appear when a pid is reused mid-scan. The walk must
