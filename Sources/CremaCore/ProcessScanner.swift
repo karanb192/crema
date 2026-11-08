@@ -14,20 +14,17 @@ public struct ScannedProcess: Equatable {
     public let path: String        // full executable path
     public let cpuNanos: UInt64     // cumulative CPU time (user + system), nanoseconds
     public let childCPUNanos: UInt64 // CPU of children this process has reaped, nanoseconds
-    public let cpuReadable: Bool     // false when either CPU counter could not be read or converted
     public let startTime: Date      // process start
     public var cwd: String          // best-effort working directory, "" if unavailable
 
     public init(pid: pid_t, ppid: pid_t, name: String, path: String = "",
-                cpuNanos: UInt64, childCPUNanos: UInt64 = 0, cpuReadable: Bool = true,
-                startTime: Date, cwd: String) {
+                cpuNanos: UInt64, childCPUNanos: UInt64 = 0, startTime: Date, cwd: String) {
         self.pid = pid
         self.ppid = ppid
         self.name = name
         self.path = path
         self.cpuNanos = cpuNanos
         self.childCPUNanos = childCPUNanos
-        self.cpuReadable = cpuReadable
         self.startTime = startTime
         self.cwd = cwd
     }
@@ -118,9 +115,12 @@ public struct ProcessScanner {
         var task = proc_taskinfo()
         let taskSize = Int32(MemoryLayout<proc_taskinfo>.size)
         let taskRet = proc_pidinfo(pid, PROC_PIDTASKINFO, 0, &task, taskSize)
-        let cpuNanos: UInt64? = (taskRet == taskSize)
-            ? Self.nanos(fromTicks: task.pti_total_user &+ task.pti_total_system)
-            : nil
+        // An unreadable counter drops the process from this scan, as a failed
+        // path or BSD read does. A guessed value would become a baseline that
+        // the next good reading is measured against.
+        guard taskRet == taskSize,
+              let cpuNanos = Self.nanos(fromTicks: task.pti_total_user &+ task.pti_total_system)
+        else { return nil }
 
         // A child that starts and exits between two scans is never in a
         // snapshot; its CPU only shows up in the parent's reaped total.
@@ -130,17 +130,16 @@ public struct ProcessScanner {
                 proc_pid_rusage(pid, RUSAGE_INFO_V2, $0)
             }
         }
-        let childCPUNanos: UInt64? = usageRet == 0
-            ? Self.nanos(fromTicks: usage.ri_child_user_time &+ usage.ri_child_system_time)
-            : nil
+        guard usageRet == 0,
+              let childCPUNanos = Self.nanos(fromTicks: usage.ri_child_user_time &+ usage.ri_child_system_time)
+        else { return nil }
 
         // cwd is left empty here and filled in lazily only for the few
         // agent processes that need it, since resolving it for every process
         // on every scan is wasteful.
         return ScannedProcess(
             pid: pid, ppid: ppid, name: name, path: path,
-            cpuNanos: cpuNanos ?? 0, childCPUNanos: childCPUNanos ?? 0,
-            cpuReadable: cpuNanos != nil && childCPUNanos != nil, startTime: startTime,
+            cpuNanos: cpuNanos, childCPUNanos: childCPUNanos, startTime: startTime,
             cwd: ""
         )
     }
