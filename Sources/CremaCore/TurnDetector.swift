@@ -20,6 +20,10 @@ public final class TurnDetector {
         /// a test run) sits near a full core; periodic helpers stay far below.
         public var descendantThreshold: Double = 0.2
         public var descendantWindow: TimeInterval = 30
+        /// Rates are measured over at least this long, the normal scan
+        /// interval. A scan triggered right after another (a menu action)
+        /// must not turn a small burst into a high rate.
+        public var minimumRateSpan: TimeInterval = 5
         /// Keep a session "working" for this long after its last active sample.
         public var stickySeconds: TimeInterval = 8
         /// A transcript write newer than this counts the session as working,
@@ -80,8 +84,8 @@ public final class TurnDetector {
                     history.removeAll { now.timeIntervalSince($0.at) > config.descendantWindow }
                     let span = history.reduce(0) { $0 + $1.elapsed }
                     let descendantNanos = history.reduce(UInt64(0)) { $0 &+ $1.nanos }
-                    let ownCores = Double(ownNanos) / 1_000_000_000.0 / elapsed
-                    let descendantCores = span > 0 ? Double(descendantNanos) / 1_000_000_000.0 / span : 0
+                    let ownCores = Double(ownNanos) / 1_000_000_000.0 / max(elapsed, config.minimumRateSpan)
+                    let descendantCores = Double(descendantNanos) / 1_000_000_000.0 / max(span, config.minimumRateSpan)
                     if ownCores >= config.workingThreshold || descendantCores >= config.descendantThreshold {
                         lastActive = now
                     }
@@ -99,8 +103,12 @@ public final class TurnDetector {
                 if fileActive { lastActive = max(lastActive, now) }
             }
 
+            // These counters only grow for one process, so a lower reading is a
+            // failed read; keeping the last good value stops the next good read
+            // from counting the process's whole history as one interval.
             live[proc.pid] = Sample(startTime: proc.startTime, ppid: proc.ppid,
-                                    ownNanos: proc.cpuNanos, reapedNanos: proc.childCPUNanos,
+                                    ownNanos: max(proc.cpuNanos, previous?.ownNanos ?? 0),
+                                    reapedNanos: max(proc.childCPUNanos, previous?.reapedNanos ?? 0),
                                     at: now, lastActive: lastActive, descendantHistory: history)
         }
 

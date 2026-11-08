@@ -263,12 +263,41 @@ final class TurnDetectorTests: XCTestCase {
             processes: [proc(pid: 72, cpuNanos: 0, reaped: 5 * second)],
             now: start.addingTimeInterval(5))
         XCTAssertTrue(working.contains(72))
-        for tick in 2...9 {
+        for tick in 2...4 {
+            working = detector.update(
+                processes: [proc(pid: 72, cpuNanos: 0, reaped: 5 * second)],
+                now: start.addingTimeInterval(Double(tick) * 5))
+        }
+        XCTAssertTrue(working.contains(72), "20s in: past the sticky window, inside the average")
+        for tick in 5...9 {
             working = detector.update(
                 processes: [proc(pid: 72, cpuNanos: 0, reaped: 5 * second)],
                 now: start.addingTimeInterval(Double(tick) * 5))
         }
         XCTAssertFalse(working.contains(72), "45s after one 5s burst")
+    }
+
+    /// A scan right after another (a menu action) must not turn one short
+    /// helper run into a high rate.
+    func testShortScanGapDoesNotInflateRate() {
+        let detector = TurnDetector()
+        _ = detector.update(processes: [proc(pid: 74, cpuNanos: 0)], now: start)
+        let working = detector.update(
+            processes: [proc(pid: 74, cpuNanos: second / 50, reaped: second / 5)],
+            now: start.addingTimeInterval(0.5))
+        XCTAssertFalse(working.contains(74))
+    }
+
+    /// A failed read reports a lower counter. The next good read must not
+    /// count the process's whole CPU history as one interval.
+    func testFailedReadDoesNotReplayLifetimeCPU() {
+        let detector = TurnDetector()
+        _ = detector.update(processes: [proc(pid: 76, cpuNanos: 100 * second, reaped: 100 * second)], now: start)
+        _ = detector.update(processes: [proc(pid: 76, cpuNanos: 0, reaped: 0)], now: start.addingTimeInterval(5))
+        let working = detector.update(
+            processes: [proc(pid: 76, cpuNanos: 100 * second, reaped: 100 * second)],
+            now: start.addingTimeInterval(10))
+        XCTAssertFalse(working.contains(76))
     }
 
     /// A ppid cycle can appear when a pid is reused mid-scan. The walk must
