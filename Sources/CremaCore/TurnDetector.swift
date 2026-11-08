@@ -1,19 +1,25 @@
 import Foundation
 
 /// Decides whether each watched process is "working" (mid-turn) or "waiting"
-/// (idle at a prompt) from the CPU its process subtree used between scans.
+/// (idle at a prompt) from the CPU it and its descendants used between scans.
 ///
 /// An agent mid-turn burns CPU itself or in tool subprocesses (a build, a test
-/// run, a subagent); an agent parked at a prompt sits near zero. Each process's
-/// own CPU delta is taken against its own previous sample, then the deltas are
-/// summed over the agent's live subtree and converted to cores-used. A short
-/// "sticky" window keeps a session marked working for a few seconds after its
-/// last burst so streaming pauses do not flap the state.
+/// run); an agent parked at a prompt sits near zero. The agent's own CPU rate
+/// is checked each scan. Its descendants' CPU, including children that already
+/// exited, is averaged over a longer window against a higher bar, because an
+/// idle agent still runs brief helpers (a status line every few seconds) that
+/// must not read as work. A short "sticky" window keeps a session marked
+/// working for a few seconds after its last burst so pauses do not flap it.
 public final class TurnDetector {
 
     public struct Config {
-        /// Cores-used above which a process subtree counts as actively working.
+        /// Cores-used by the process itself above which it counts as working.
         public var workingThreshold: Double = 0.04
+        /// Average cores-used by its descendants over `descendantWindow` above
+        /// which the process counts as working. Sustained tool work (a build,
+        /// a test run) sits near a full core; periodic helpers stay far below.
+        public var descendantThreshold: Double = 0.2
+        public var descendantWindow: TimeInterval = 30
         /// Keep a session "working" for this long after its last active sample.
         public var stickySeconds: TimeInterval = 8
         /// A transcript write newer than this counts the session as working,
@@ -32,6 +38,8 @@ public final class TurnDetector {
         var reapedNanos: UInt64
         var at: Date
         var lastActive: Date
+        /// Recent (scan time, seconds since previous scan, descendant CPU).
+        var descendantHistory: [(at: Date, elapsed: TimeInterval, nanos: UInt64)] = []
     }
 
     private var samples: [pid_t: Sample] = [:]
@@ -52,7 +60,8 @@ public final class TurnDetector {
                        lastWrite: ((ScannedProcess) -> Date?)? = nil) -> Set<pid_t> {
         var working: Set<pid_t> = []
         var live: [pid_t: Sample] = [:]
-        let subtree = Self.subtreeTotals(of: cpuSinceLastScan(processes), processes: processes)
+        let own = cpuSinceLastScan(processes)
+        let subtree = Self.subtreeTotals(of: own.withReaped, processes: processes)
 
         for proc in processes {
             let previous = samples[proc.pid].flatMap { $0.startTime == proc.startTime ? $0 : nil }
@@ -60,12 +69,20 @@ public final class TurnDetector {
             // the past so the sticky window cannot count "just launched" as
             // working. Only a real CPU burst or transcript write marks it.
             var lastActive = previous?.lastActive ?? .distantPast
+            var history = previous?.descendantHistory ?? []
 
             if let prev = previous {
                 let elapsed = now.timeIntervalSince(prev.at)
                 if elapsed > 0 {
-                    let coresUsed = (Double(subtree[proc.pid] ?? 0) / 1_000_000_000.0) / elapsed
-                    if coresUsed >= config.workingThreshold {
+                    let ownNanos = own.selfOnly[proc.pid] ?? 0
+                    let total = subtree[proc.pid] ?? 0
+                    history.append((now, elapsed, total > ownNanos ? total - ownNanos : 0))
+                    history.removeAll { now.timeIntervalSince($0.at) > config.descendantWindow }
+                    let span = history.reduce(0) { $0 + $1.elapsed }
+                    let descendantNanos = history.reduce(UInt64(0)) { $0 &+ $1.nanos }
+                    let ownCores = Double(ownNanos) / 1_000_000_000.0 / elapsed
+                    let descendantCores = span > 0 ? Double(descendantNanos) / 1_000_000_000.0 / span : 0
+                    if ownCores >= config.workingThreshold || descendantCores >= config.descendantThreshold {
                         lastActive = now
                     }
                 }
@@ -84,7 +101,7 @@ public final class TurnDetector {
 
             live[proc.pid] = Sample(startTime: proc.startTime, ppid: proc.ppid,
                                     ownNanos: proc.cpuNanos, reapedNanos: proc.childCPUNanos,
-                                    at: now, lastActive: lastActive)
+                                    at: now, lastActive: lastActive, descendantHistory: history)
         }
 
         samples = live   // drops pids that have exited
@@ -92,10 +109,12 @@ public final class TurnDetector {
         return working
     }
 
-    /// CPU each process used since the previous scan: its own delta plus the
-    /// growth in CPU of children it reaped. Deltas are per process, so a child
-    /// that exits cannot cancel work done elsewhere in the subtree.
-    private func cpuSinceLastScan(_ processes: [ScannedProcess]) -> [pid_t: UInt64] {
+    /// CPU each process used since the previous scan: its own delta alone, and
+    /// that plus the growth in CPU of children it reaped. Deltas are per
+    /// process, so a child that exits cannot cancel work elsewhere in the
+    /// subtree.
+    private func cpuSinceLastScan(_ processes: [ScannedProcess])
+        -> (selfOnly: [pid_t: UInt64], withReaped: [pid_t: UInt64]) {
         let current = Dictionary(processes.map { ($0.pid, $0) }, uniquingKeysWith: { first, _ in first })
         func isLive(_ pid: pid_t, _ sample: Sample) -> Bool {
             current[pid]?.startTime == sample.startTime
@@ -115,19 +134,22 @@ public final class TurnDetector {
             alreadyCounted[ancestor, default: 0] &+= gone.ownNanos &+ gone.reapedNanos
         }
 
-        var deltas: [pid_t: UInt64] = [:]
+        var selfOnly: [pid_t: UInt64] = [:]
+        var withReaped: [pid_t: UInt64] = [:]
         for proc in processes {
             if let prev = samples[proc.pid], prev.startTime == proc.startTime {
                 let own = proc.cpuNanos >= prev.ownNanos ? proc.cpuNanos - prev.ownNanos : 0
                 let reaped = proc.childCPUNanos >= prev.reapedNanos ? proc.childCPUNanos - prev.reapedNanos : 0
                 let credit = alreadyCounted[proc.pid] ?? 0
-                deltas[proc.pid] = own &+ (reaped > credit ? reaped - credit : 0)
+                selfOnly[proc.pid] = own
+                withReaped[proc.pid] = own &+ (reaped > credit ? reaped - credit : 0)
             } else if let lastScanAt, proc.startTime > lastScanAt {
                 // Started since the last scan, so all of its CPU is new.
-                deltas[proc.pid] = proc.cpuNanos &+ proc.childCPUNanos
+                selfOnly[proc.pid] = proc.cpuNanos
+                withReaped[proc.pid] = proc.cpuNanos &+ proc.childCPUNanos
             }
         }
-        return deltas
+        return (selfOnly, withReaped)
     }
 
     /// Sums `values` over each process and its live descendants. Iterative,

@@ -172,7 +172,7 @@ final class TurnDetectorTests: XCTestCase {
         ], now: start)
         let working = detector.update(processes: [
             proc(pid: 34, cpuNanos: 0, reaped: 5 * second),
-            proc(pid: 36, ppid: 34, name: "swift", cpuNanos: second),
+            proc(pid: 36, ppid: 34, name: "swift", cpuNanos: 2 * second),
         ], now: start.addingTimeInterval(5))
         XCTAssertTrue(working.contains(34))
     }
@@ -194,7 +194,7 @@ final class TurnDetectorTests: XCTestCase {
                 now: start.addingTimeInterval(5)
             ).contains(40)
         }
-        XCTAssertTrue(run(finalInterval: second), "1s of new CPU in 5s is 0.2 cores")
+        XCTAssertTrue(run(finalInterval: 2 * second), "2s of new CPU in 5s is 0.4 cores")
         XCTAssertFalse(run(finalInterval: 0), "100s of old CPU must not count again")
     }
 
@@ -215,7 +215,7 @@ final class TurnDetectorTests: XCTestCase {
         _ = detector.update(processes: [proc(pid: 52, cpuNanos: 0)], now: start)
         let working = detector.update(processes: [
             proc(pid: 52, cpuNanos: 0),
-            proc(pid: 53, ppid: 52, name: "swift", cpuNanos: second,
+            proc(pid: 53, ppid: 52, name: "swift", cpuNanos: 2 * second,
                  startedAt: start.addingTimeInterval(3)),
         ], now: start.addingTimeInterval(5))
         XCTAssertTrue(working.contains(52))
@@ -235,6 +235,40 @@ final class TurnDetectorTests: XCTestCase {
                  startedAt: start.addingTimeInterval(19)),
         ], now: start.addingTimeInterval(20))
         XCTAssertFalse(working.contains(54))
+    }
+
+    /// An idle agent still runs brief helpers, such as a status line every
+    /// few seconds. Their CPU is real but must never read as a turn.
+    func testPeriodicShortHelpersDoNotMarkWorking() {
+        let detector = TurnDetector()
+        var reaped: UInt64 = 0
+        _ = detector.update(processes: [proc(pid: 70, cpuNanos: 0)], now: start)
+        for tick in 1...12 {
+            // 0.25s of helper CPU every 5s: 0.05 cores, above the agent's own
+            // per-scan bar but far below a sustained build.
+            reaped += second / 4
+            let working = detector.update(
+                processes: [proc(pid: 70, cpuNanos: 0, reaped: reaped)],
+                now: start.addingTimeInterval(Double(tick) * 5))
+            XCTAssertFalse(working.contains(70), "tick \(tick)")
+        }
+    }
+
+    /// One burst of descendant work holds the session for the averaging
+    /// window plus the sticky window, then lets it go.
+    func testDescendantBurstAgesOutOfWindow() {
+        let detector = TurnDetector()
+        _ = detector.update(processes: [proc(pid: 72, cpuNanos: 0)], now: start)
+        var working = detector.update(
+            processes: [proc(pid: 72, cpuNanos: 0, reaped: 5 * second)],
+            now: start.addingTimeInterval(5))
+        XCTAssertTrue(working.contains(72))
+        for tick in 2...9 {
+            working = detector.update(
+                processes: [proc(pid: 72, cpuNanos: 0, reaped: 5 * second)],
+                now: start.addingTimeInterval(Double(tick) * 5))
+        }
+        XCTAssertFalse(working.contains(72), "45s after one 5s burst")
     }
 
     /// A ppid cycle can appear when a pid is reused mid-scan. The walk must
