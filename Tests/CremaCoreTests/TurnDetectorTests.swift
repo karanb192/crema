@@ -6,10 +6,14 @@ final class TurnDetectorTests: XCTestCase {
     private let start = Date(timeIntervalSince1970: 2000)
 
     private func proc(pid: pid_t, ppid: pid_t = 1, name: String = "claude",
-                      cpuNanos: UInt64) -> ScannedProcess {
+                      cpuNanos: UInt64, reaped: UInt64 = 0,
+                      startedAt: Date? = nil) -> ScannedProcess {
         ScannedProcess(pid: pid, ppid: ppid, name: name, path: "/usr/bin/\(name)",
-                       cpuNanos: cpuNanos, startTime: start, cwd: "")
+                       cpuNanos: cpuNanos, childCPUNanos: reaped,
+                       startTime: startedAt ?? start, cwd: "")
     }
+
+    private let second: UInt64 = 1_000_000_000
 
     func testCPUBurstMarksWorking() {
         let detector = TurnDetector()
@@ -110,20 +114,143 @@ final class TurnDetectorTests: XCTestCase {
         XCTAssertTrue(working.contains(20))
     }
 
-    /// A child exiting shrinks the subtree sum; that must read as "no burst
-    /// this tick", never as a counter reset that marks the agent working.
+    /// An idle parent reaping a busy child's history must not read as a
+    /// burst: that CPU was counted while the child was alive.
     func testChildExitDoesNotMarkWorking() {
-        var config = TurnDetector.Config()
-        config.stickySeconds = 8
-        let detector = TurnDetector(config: config)
+        let detector = TurnDetector()
         _ = detector.update(processes: [
             proc(pid: 30, cpuNanos: 0),
-            proc(pid: 31, ppid: 30, name: "zsh", cpuNanos: 5_000_000_000),
+            proc(pid: 31, ppid: 30, name: "zsh", cpuNanos: 5 * second),
         ], now: start)
-        let working = detector.update(
+        let reapedIt = detector.update(
+            processes: [proc(pid: 30, cpuNanos: 0, reaped: 5 * second)],
+            now: start.addingTimeInterval(20))
+        XCTAssertFalse(reapedIt.contains(30))
+
+        let orphanDetector = TurnDetector()
+        _ = orphanDetector.update(processes: [
+            proc(pid: 30, cpuNanos: 0),
+            proc(pid: 31, ppid: 30, name: "zsh", cpuNanos: 5 * second),
+        ], now: start)
+        let orphaned = orphanDetector.update(
             processes: [proc(pid: 30, cpuNanos: 0)],
             now: start.addingTimeInterval(20))
-        XCTAssertFalse(working.contains(30))
+        XCTAssertFalse(orphaned.contains(30))
+    }
+
+    /// A child exiting must not cancel the parent's own CPU in the same tick.
+    func testChildExitKeepsBusyParentWorking() {
+        let detector = TurnDetector()
+        _ = detector.update(processes: [
+            proc(pid: 32, cpuNanos: 0),
+            proc(pid: 33, ppid: 32, name: "zsh", cpuNanos: 5 * second),
+        ], now: start)
+        // 0.25s of parent CPU over 5s is 0.05 cores, above the 0.04 threshold.
+        let reapedIt = detector.update(
+            processes: [proc(pid: 32, cpuNanos: second / 4, reaped: 5 * second)],
+            now: start.addingTimeInterval(5))
+        XCTAssertTrue(reapedIt.contains(32))
+
+        let orphanDetector = TurnDetector()
+        _ = orphanDetector.update(processes: [
+            proc(pid: 32, cpuNanos: 0),
+            proc(pid: 33, ppid: 32, name: "zsh", cpuNanos: 5 * second),
+        ], now: start)
+        let orphaned = orphanDetector.update(
+            processes: [proc(pid: 32, cpuNanos: second / 4)],
+            now: start.addingTimeInterval(5))
+        XCTAssertTrue(orphaned.contains(32))
+    }
+
+    /// One child exiting must not cancel a busy sibling.
+    func testChildExitKeepsBusySiblingCounted() {
+        let detector = TurnDetector()
+        _ = detector.update(processes: [
+            proc(pid: 34, cpuNanos: 0),
+            proc(pid: 35, ppid: 34, name: "zsh", cpuNanos: 5 * second),
+            proc(pid: 36, ppid: 34, name: "swift", cpuNanos: 0),
+        ], now: start)
+        let working = detector.update(processes: [
+            proc(pid: 34, cpuNanos: 0, reaped: 5 * second),
+            proc(pid: 36, ppid: 34, name: "swift", cpuNanos: second),
+        ], now: start.addingTimeInterval(5))
+        XCTAssertTrue(working.contains(34))
+    }
+
+    /// A shell and its command exiting together: the agent reaps the shell,
+    /// whose reaped total holds the command. Only CPU used since the last
+    /// scan may count, never the command's whole history again.
+    func testShellAndCommandExitingTogetherCountOnlyNewCPU() {
+        func run(finalInterval: UInt64) -> Bool {
+            let detector = TurnDetector()
+            _ = detector.update(processes: [
+                proc(pid: 40, cpuNanos: 0),
+                proc(pid: 41, ppid: 40, name: "zsh", cpuNanos: second / 10),
+                proc(pid: 42, ppid: 41, name: "python3", cpuNanos: 100 * second),
+            ], now: start)
+            let shellTotal = second / 10 + 100 * second + finalInterval
+            return detector.update(
+                processes: [proc(pid: 40, cpuNanos: 0, reaped: shellTotal)],
+                now: start.addingTimeInterval(5)
+            ).contains(40)
+        }
+        XCTAssertTrue(run(finalInterval: second), "1s of new CPU in 5s is 0.2 cores")
+        XCTAssertFalse(run(finalInterval: 0), "100s of old CPU must not count again")
+    }
+
+    /// A child that starts and exits between two scans is never in a
+    /// snapshot; its CPU arrives through the parent's reaped total.
+    func testShortLivedChildCountsThroughReapedTime() {
+        let detector = TurnDetector()
+        _ = detector.update(processes: [proc(pid: 50, cpuNanos: 0)], now: start)
+        let working = detector.update(
+            processes: [proc(pid: 50, cpuNanos: 0, reaped: 2 * second)],
+            now: start.addingTimeInterval(5))
+        XCTAssertTrue(working.contains(50))
+    }
+
+    /// A child born since the last scan counts all of its CPU.
+    func testChildBornSinceLastScanCounts() {
+        let detector = TurnDetector()
+        _ = detector.update(processes: [proc(pid: 52, cpuNanos: 0)], now: start)
+        let working = detector.update(processes: [
+            proc(pid: 52, cpuNanos: 0),
+            proc(pid: 53, ppid: 52, name: "swift", cpuNanos: second,
+                 startedAt: start.addingTimeInterval(3)),
+        ], now: start.addingTimeInterval(5))
+        XCTAssertTrue(working.contains(52))
+    }
+
+    /// A reused pid is a new process: neither the old process's CPU nor a
+    /// negative delta against it may leak into the agent.
+    func testReusedPidIsTreatedAsNewProcess() {
+        let detector = TurnDetector()
+        _ = detector.update(processes: [
+            proc(pid: 54, cpuNanos: 0),
+            proc(pid: 55, ppid: 54, name: "zsh", cpuNanos: 10 * second),
+        ], now: start)
+        let working = detector.update(processes: [
+            proc(pid: 54, cpuNanos: 0, reaped: 10 * second),
+            proc(pid: 55, ppid: 54, name: "zsh", cpuNanos: 0,
+                 startedAt: start.addingTimeInterval(19)),
+        ], now: start.addingTimeInterval(20))
+        XCTAssertFalse(working.contains(54))
+    }
+
+    /// A ppid cycle can appear when a pid is reused mid-scan. The walk must
+    /// finish instead of recursing until the stack overflows.
+    func testParentCycleDoesNotHang() {
+        let detector = TurnDetector()
+        let cycle = [
+            proc(pid: 60, ppid: 61, cpuNanos: 0),
+            proc(pid: 61, ppid: 60, name: "zsh", cpuNanos: 0),
+        ]
+        _ = detector.update(processes: cycle, now: start)
+        let working = detector.update(processes: [
+            proc(pid: 60, ppid: 61, cpuNanos: second),
+            proc(pid: 61, ppid: 60, name: "zsh", cpuNanos: 0),
+        ], now: start.addingTimeInterval(1))
+        XCTAssertTrue(working.contains(60))
     }
 
     /// A transcript write two minutes old is still inside the widened window:

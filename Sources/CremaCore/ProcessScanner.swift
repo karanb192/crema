@@ -13,16 +13,18 @@ public struct ScannedProcess: Equatable {
     public let name: String        // executable basename
     public let path: String        // full executable path
     public let cpuNanos: UInt64     // cumulative CPU time (user + system), nanoseconds
+    public let childCPUNanos: UInt64 // CPU of children this process has reaped, nanoseconds
     public let startTime: Date      // process start
     public var cwd: String          // best-effort working directory, "" if unavailable
 
     public init(pid: pid_t, ppid: pid_t, name: String, path: String = "",
-                cpuNanos: UInt64, startTime: Date, cwd: String) {
+                cpuNanos: UInt64, childCPUNanos: UInt64 = 0, startTime: Date, cwd: String) {
         self.pid = pid
         self.ppid = ppid
         self.name = name
         self.path = path
         self.cpuNanos = cpuNanos
+        self.childCPUNanos = childCPUNanos
         self.startTime = startTime
         self.cwd = cwd
     }
@@ -117,28 +119,34 @@ public struct ProcessScanner {
             ? Self.nanos(fromTicks: task.pti_total_user &+ task.pti_total_system)
             : 0
 
+        // A child that starts and exits between two scans is never in a
+        // snapshot; its CPU only shows up in the parent's reaped total.
+        var usage = rusage_info_v2()
+        let usageRet = withUnsafeMutablePointer(to: &usage) {
+            $0.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) {
+                proc_pid_rusage(pid, RUSAGE_INFO_V2, $0)
+            }
+        }
+        let childCPUNanos: UInt64 = usageRet == 0
+            ? Self.nanos(fromTicks: usage.ri_child_user_time &+ usage.ri_child_system_time)
+            : 0
+
         // cwd is left empty here and filled in lazily only for the few
         // agent processes that need it, since resolving it for every process
         // on every scan is wasteful.
         return ScannedProcess(
             pid: pid, ppid: ppid, name: name, path: path,
-            cpuNanos: cpuNanos, startTime: startTime,
+            cpuNanos: cpuNanos, childCPUNanos: childCPUNanos, startTime: startTime,
             cwd: ""
         )
     }
 
-    /// PROC_PIDTASKINFO reports CPU time in Mach absolute-time ticks, not
-    /// nanoseconds. On Intel a tick is 1 ns, but on Apple Silicon it is
-    /// 125/3 ns, so the raw value undercounts CPU about 41x and a process
-    /// pinning a full core reads as 0.024 cores.
-    private static let timebase: mach_timebase_info_data_t = {
-        var info = mach_timebase_info_data_t()
-        mach_timebase_info(&info)
-        return info
-    }()
-
+    /// PROC_PIDTASKINFO and proc_pid_rusage report CPU time in Mach
+    /// absolute-time ticks, not nanoseconds. On Intel a tick is 1 ns, but on
+    /// Apple Silicon it is 125/3 ns, so raw values undercount CPU about 41x.
     static func nanos(fromTicks ticks: UInt64) -> UInt64 {
-        nanos(fromTicks: ticks, numer: timebase.numer, denom: timebase.denom)
+        guard let timebase = timebaseCache.value() else { return ticks }
+        return nanos(fromTicks: ticks, numer: timebase.numer, denom: timebase.denom)
     }
 
     /// Split so the multiply cannot overflow for any realistic CPU total.
@@ -159,5 +167,24 @@ public struct ProcessScanner {
             let ptr = raw.bindMemory(to: CChar.self).baseAddress!
             return String(cString: ptr)
         }
+    }
+}
+
+/// Caches only a successful lookup, so a failed call is retried next scan
+/// instead of pinning the scanner to raw ticks.
+private let timebaseCache = TimebaseCache()
+
+private final class TimebaseCache: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cached: mach_timebase_info_data_t?
+
+    func value() -> mach_timebase_info_data_t? {
+        lock.lock()
+        defer { lock.unlock() }
+        if let cached { return cached }
+        var info = mach_timebase_info_data_t()
+        guard mach_timebase_info(&info) == KERN_SUCCESS, info.numer != 0, info.denom != 0 else { return nil }
+        cached = info
+        return info
     }
 }
