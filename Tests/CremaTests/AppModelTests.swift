@@ -177,6 +177,42 @@ final class AppModelTests: XCTestCase {
                                      startTime: clock, cwd: "/tmp/example-project")
         return .init(processes: [process], workingPIDs: [42], lastActive: [42: clock])
     }
+
+    func testScansSlowlyOnlyWhenNothingIsWatched() async {
+        model.tick()
+        await finishScan()
+        XCTAssertEqual(model.scanInterval, 30)
+
+        model.tick()
+        await finishScan(workingAgent())
+        XCTAssertEqual(model.scanInterval, 5)
+
+        model.rest()
+        model.tick()
+        await finishScan(SessionScanner.Output())
+        XCTAssertEqual(model.scanInterval, 30)
+        model.pin(minutes: 30)
+        XCTAssertEqual(model.scanInterval, 5, "a hold keeps the fast interval")
+        await finishScan()
+    }
+
+    func testTimerFollowsTheInterval() async {
+        scanner.finish()   // every scan returns at once with this output
+        let auto = AppModel(scanEngine: scanner, controller: controller, defaults: defaults,
+                            now: { [unowned self] in self.clock }, startsAutomatically: true)
+        await auto.scanTask?.value
+        XCTAssertEqual(auto.scheduledInterval, 30)
+
+        scanner.finish(workingAgent())
+        auto.tick()
+        await auto.scanTask?.value
+        XCTAssertEqual(auto.scheduledInterval, 5)
+
+        scanner.finish()
+        auto.rest()
+        await auto.scanTask?.value
+        XCTAssertEqual(auto.scheduledInterval, 30)
+    }
 }
 
 private final class TestController: PowerControlling {

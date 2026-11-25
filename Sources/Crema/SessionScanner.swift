@@ -36,12 +36,13 @@ final class SessionScanner: SessionScanning {
     private var commandLines: [pid_t: CommandLine] = [:]
 
     func run(rules: [Rule], now: Date) -> Output {
-        var processes = scanner.snapshot()
-
         let agentRules = rules.filter { $0.enabled && $0.kind == .whileAgentWorking }
         func isAgentProcess(_ p: ScannedProcess) -> Bool {
             !p.isInAppBundle && !p.isAgentHelper && agentRules.contains { $0.matches(p) }
         }
+        // CPU counters only for agent process trees: turn detection and shell
+        // jobs need nothing else, and batch rules only need a process to exist.
+        var processes = scanner.snapshot(readingCPUOf: isAgentProcess)
 
         // Resolve argv, Claude's own session record and cwd only for the
         // agent processes that need them.

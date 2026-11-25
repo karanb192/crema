@@ -38,7 +38,7 @@ final class ProcessScannerTests: XCTestCase {
     /// flipped ratio would read about 1700x high; both fall outside the band.
     func testOwnCPUMatchesKernelAccounting() {
         let me = getpid()
-        func scanned() -> UInt64 { ProcessScanner.info(for: me)?.cpuNanos ?? 0 }
+        func scanned() -> UInt64 { ProcessScanner.cpu(for: me)?.own ?? 0 }
         func kernel() -> UInt64 {
             var usage = rusage()
             getrusage(RUSAGE_SELF, &usage)
@@ -60,7 +60,7 @@ final class ProcessScannerTests: XCTestCase {
     /// parent's reaped total, in the same units the kernel reports.
     func testReapedChildCPUMatchesKernelAccounting() throws {
         let me = getpid()
-        func scanned() -> UInt64 { ProcessScanner.info(for: me)?.childCPUNanos ?? 0 }
+        func scanned() -> UInt64 { ProcessScanner.cpu(for: me)?.reaped ?? 0 }
         func kernel() -> UInt64 {
             var usage = rusage()
             getrusage(RUSAGE_CHILDREN, &usage)
@@ -105,4 +105,52 @@ final class ProcessScannerTests: XCTestCase {
                                                    environmentKeys: []).environment.isEmpty)
         XCTAssertEqual(ProcessScanner.parseProcArgs([1, 0], environmentKeys: []).arguments, [])
     }
+
+    func testReadsCPUOnlyForRequestedTreesAndTheirChildren() throws {
+        let child = Process()
+        child.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        child.arguments = ["30"]
+        try child.run()
+        defer { child.terminate() }
+
+        let me = getpid()
+        let sleeper = child.processIdentifier
+        let scanner = ProcessScanner()
+        for _ in 0..<2 {   // the second scan uses cached identities
+            // The test process and its child: CPU for both.
+            let all = scanner.snapshot(readingCPUOf: { $0.pid == me })
+            XCTAssertTrue(try XCTUnwrap(all.first { $0.pid == me }).hasCPU)
+            XCTAssertGreaterThan(try XCTUnwrap(all.first { $0.pid == me }).cpuNanos, 0)
+            let child = try XCTUnwrap(all.first { $0.pid == sleeper })
+            XCTAssertTrue(child.hasCPU, "a descendant of a requested process gets CPU too")
+            XCTAssertEqual(child.path, "/bin/sleep")
+
+            // Only the child: its parent, the test process, gets none.
+            let some = scanner.snapshot(readingCPUOf: { $0.pid == sleeper })
+            let mine = try XCTUnwrap(some.first { $0.pid == me })
+            XCTAssertFalse(mine.hasCPU)
+            XCTAssertEqual(mine.cpuNanos, 0)
+            XCTAssertTrue(try XCTUnwrap(some.first { $0.pid == sleeper }).hasCPU)
+        }
+    }
+
+    func testRereadsPathOnceAfterTheExecWindow() {
+        let start = Date(timeIntervalSince1970: 1_000)
+        // Read inside the first 2 s: once more after the window, then final.
+        XCTAssertFalse(ProcessScanner.needsPathRefresh(startTime: start, pathReadAt: start.addingTimeInterval(0.5),
+                                                       now: start.addingTimeInterval(1)))
+        XCTAssertTrue(ProcessScanner.needsPathRefresh(startTime: start, pathReadAt: start.addingTimeInterval(0.5),
+                                                      now: start.addingTimeInterval(5)))
+        XCTAssertFalse(ProcessScanner.needsPathRefresh(startTime: start, pathReadAt: start.addingTimeInterval(5),
+                                                       now: start.addingTimeInterval(60)))
+    }
+
+    func testByteSubstringSearch() {
+        XCTAssertTrue(ScannedProcess.utf8("ffmpeg-static", contains: "ffmpeg"))
+        XCTAssertFalse(ScannedProcess.utf8("x", contains: ""), "an empty pattern matches nothing")
+        XCTAssertFalse(ScannedProcess.utf8("ff", contains: "ffmpeg"))
+        XCTAssertFalse(ScannedProcess.utf8("", contains: "a"))
+        XCTAssertTrue(ScannedProcess.utf8("café-claude", contains: "claude"))
+    }
+
 }

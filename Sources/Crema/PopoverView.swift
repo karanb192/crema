@@ -22,6 +22,8 @@ struct PopoverView: View {
             footer
         }
         .frame(width: 320)
+        // Fresh state on open, even between the slower idle scans.
+        .onAppear { model.tick() }
     }
 
     // MARK: - Sections

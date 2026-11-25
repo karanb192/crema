@@ -38,7 +38,21 @@ final class AppModel: ObservableObject {
     private var timer: Timer?
     private(set) var scanTask: Task<Void, Never>?
 
-    private let scanInterval: TimeInterval = 5
+    /// Scan every 5 s while there is something to watch; every 30 s when no
+    /// agent or batch process exists and nothing holds the Mac awake, so an
+    /// idle Mac is not woken 12 times a minute for an empty answer. A new
+    /// agent is then noticed up to 30 s late, well inside any sleep timer.
+    private let activeScanInterval: TimeInterval = 5
+    private let idleScanInterval: TimeInterval = 30
+    private var scansAutomatically = false
+
+    /// The running timer's interval, nil before the first schedule.
+    var scheduledInterval: TimeInterval? { timer?.timeInterval }
+
+    var scanInterval: TimeInterval {
+        let idle = sessions.isEmpty && runningBatchRuleIDs.isEmpty && !decision.systemHold
+        return idle ? idleScanInterval : activeScanInterval
+    }
 
     init(scanEngine: SessionScanning = SessionScanner(),
          controller: PowerControlling = AssertionController(),
@@ -51,11 +65,19 @@ final class AppModel: ObservableObject {
         self.now = now
         self.ledger = Self.loadLedger(defaults: defaults)
         guard startsAutomatically else { return }
+        scansAutomatically = true
         tick()
-        let timer = Timer.scheduledTimer(withTimeInterval: scanInterval, repeats: true) { [weak self] _ in
+        scheduleTimer()
+    }
+
+    /// (Re)creates the repeating scan timer when the interval should change.
+    private func scheduleTimer() {
+        guard scansAutomatically, timer?.timeInterval != scanInterval else { return }
+        timer?.invalidate()
+        let timer = Timer(timeInterval: scanInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
         }
-        timer.tolerance = 1   // let macOS coalesce wakeups; a scan a second late is fine
+        timer.tolerance = max(1, scanInterval / 10)   // let macOS coalesce wakeups
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
     }
@@ -176,6 +198,7 @@ final class AppModel: ObservableObject {
         if newDecision != decision { decision = newDecision }
         let failed = !controller.apply(decision)
         if failed != holdFailed { holdFailed = failed }
+        scheduleTimer()
         recordLedger(held: controller.holdsSystem)
     }
 

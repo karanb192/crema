@@ -344,4 +344,33 @@ final class TurnDetectorTests: XCTestCase {
         _ = detector.update(processes: [], now: start.addingTimeInterval(1))
         XCTAssertNil(detector.lastActive(for: 4))
     }
+
+    func testOrphanLeavingTheWatchedTreeIsNotCreditedAsReaped() {
+        let detector = TurnDetector()
+        let agent = proc(pid: 1, ppid: 0, cpuNanos: 0)
+        let server = proc(pid: 2, ppid: 1, name: "node", cpuNanos: 100 * second)
+        _ = detector.update(processes: [agent, server], now: start)
+        // The shell exits: the server is reparented to launchd and is no longer
+        // in the watched tree. Meanwhile a real child of the agent ran 10 s of
+        // CPU and was reaped, which must still count.
+        var orphan = proc(pid: 2, ppid: 0, name: "node", cpuNanos: 101 * second)
+        orphan.hasCPU = false
+        let working = detector.update(processes: [proc(pid: 1, ppid: 0, cpuNanos: 0, reaped: 10 * second), orphan],
+                                      now: start.addingTimeInterval(5))
+        XCTAssertTrue(working.contains(1))
+    }
+
+    func testProcessNewlyScannedWithCPUDoesNotReadAsBurst() {
+        let detector = TurnDetector()
+        var unscanned = proc(pid: 1, cpuNanos: 0)
+        unscanned.hasCPU = false
+        _ = detector.update(processes: [unscanned], now: start)
+        // Its rule is switched on: first real reading carries an hour of history.
+        _ = detector.update(processes: [proc(pid: 1, cpuNanos: 3_600 * second)],
+                            now: start.addingTimeInterval(5))
+        let working = detector.update(processes: [proc(pid: 1, cpuNanos: 3_600 * second)],
+                                      now: start.addingTimeInterval(10))
+        XCTAssertFalse(working.contains(1))
+    }
+
 }
