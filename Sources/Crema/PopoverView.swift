@@ -152,13 +152,18 @@ struct PopoverView: View {
                 .fill(session.isWorking ? crema : Color.secondary.opacity(0.4))
                 .frame(width: 6, height: 6)
             VStack(alignment: .leading, spacing: 0) {
-                Text(session.shortFolder.isEmpty ? "pid \(session.pid)" : session.shortFolder)
-                    .font(.system(size: 11.5, design: .monospaced))
+                Text(sessionName(session))
+                    .font(.system(size: 11.5, weight: .medium))
                     .lineLimit(1)
-                    .truncationMode(.head)
-                Text(session.isWorking ? "working" : "waiting for you")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
+                    .truncationMode(.tail)
+                // Longest variant that fits on one line; the last one truncates.
+                ViewThatFits(in: .horizontal) {
+                    ForEach(sessionDetailVariants(session), id: \.self) { detail in
+                        Text(detail).lineLimit(1)
+                    }
+                }
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
             }
             Spacer()
         }
@@ -166,6 +171,34 @@ struct PopoverView: View {
         .padding(.trailing, 14)
         .padding(.vertical, 3)
         .opacity(session.isWorking ? 1 : 0.65)
+        .help(session.shortFolder)   // full path on hover
+    }
+
+    /// Thread title when the agent or its app reports one, else the folder.
+    private func sessionName(_ session: AgentSession) -> String {
+        if let title = session.title, !title.isEmpty { return title }
+        return session.folderLabel.isEmpty ? "pid \(session.pid)" : session.folderLabel
+    }
+
+    /// The detail line from fullest to shortest, for the popover to pick the
+    /// first that fits: "working · xcodebuild running · T3 Code · personal ·
+    /// checkout-service", then without the host app, then without the folder.
+    /// State, running command and account always stay.
+    func sessionDetailVariants(_ session: AgentSession) -> [String] {
+        let state = session.isWorking ? "working" : "waiting for you"
+        let folder = session.title?.isEmpty == false && !session.folderLabel.isEmpty ? session.folderLabel : nil
+        func line(host: Bool, folder includeFolder: Bool) -> String {
+            [state, session.activity, host ? session.host : nil, session.account,
+             includeFolder ? folder : nil]
+                .compactMap { $0 }
+                .joined(separator: " · ")
+        }
+        var variants: [String] = []
+        for candidate in [line(host: true, folder: true), line(host: false, folder: true),
+                          line(host: false, folder: false)] where !variants.contains(candidate) {
+            variants.append(candidate)
+        }
+        return variants
     }
 
     /// Manual holds, two axes. The chip row is the duration: quick presets

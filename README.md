@@ -8,7 +8,7 @@ Crema is a menu bar app for macOS. It is a `caffeinate` you can actually see, an
 
 The old keep-awake tools answer the wrong question. They know whether *you* clicked a toggle. They do not know whether Claude Code is mid-turn in one window while three others sit waiting for your next prompt. Crema does.
 
-Crema never asks for your password. It installs no sudo rule, no background helper and no agent hooks. It watches processes, reads the transcripts Claude Code already writes, and makes the same keep-awake call `caffeinate` makes. `brew install` is the whole setup.
+Crema never asks for your password. It installs no sudo rule, no background helper and no agent hooks. It watches processes, reads the session files and transcripts Claude Code already writes, and makes the same keep-awake call `caffeinate` makes. `brew install` is the whole setup.
 
 > How do I keep my Mac awake while Claude Code (or Codex, or Gemini) runs, without leaving it awake all night? That is the question Crema exists to answer.
 
@@ -16,7 +16,7 @@ Crema never asks for your password. It installs no sudo rule, no background help
 
 - **Shows its receipts.** A rolling ledger in the popover: how long Crema actually held the Mac awake over the last day, and how many times it let go. A keep-awake app should be able to prove it lets your Mac sleep.
 - **Holds the Mac awake while it detects agent activity.** After every agent reads as waiting, a 10-minute grace window runs out and Crema releases its automatic hold. A manual hold, the screen switch, or a running batch rule can keep it awake longer.
-- **Shows working vs waiting.** The popover lists each detected session, its folder, and its estimated activity. The menu bar count is sessions currently marked working.
+- **Shows working vs waiting.** The popover lists each detected session by name (the session name Claude Code records, which is the thread title in apps such as T3 Code, else its project folder), the app it runs in, and its estimated activity. The menu bar count is sessions currently marked working.
 - **Hold it yourself too.** All agents finished but you are still reading the diff? Keep the Mac awake for 30 minutes, 1, 2, 3, 4, 6, or 8 hours, or until you turn it off. The screen switch keeps both the Mac and its display awake until you switch it off, even after a timer ends.
 - **Pause.** One click releases Crema's holds immediately, even during a scan. The Mac sleeps on its normal schedule until you resume. Timers and the screen switch also take effect during a scan.
 - **Watches batch jobs too.** The built-in ffmpeg rule holds while the process runs. Adding another process currently requires a source change to [`Rule.defaults()`](Sources/CremaCore/Rule.swift). There is no custom-rule editor in the app yet.
@@ -69,8 +69,8 @@ The cup appears in your menu bar. There is no Dock icon and no window; it is a b
 ## How it works
 
 - **Power** uses [`IOPMAssertionCreateWithName`](https://developer.apple.com/documentation/iokit/1557134-iopmassertioncreatewithname), the same call `caffeinate` makes. Crema holds one system-sleep assertion and, when the screen switch is on, one display-sleep assertion.
-- **Turn detection** estimates activity from the CPU an agent and the processes it started use, and from recent transcript writes. The agent's own CPU counts from 4% of a core; the processes it started count once they average a fifth of a core over 30 seconds, so brief helpers such as a status line do not. Claude Code gets the transcript signal when its working directory belongs to one watched agent process. Shared directories and other agents use CPU activity. Both signals can miss long, quiet steps. A short sticky window keeps brief pauses from changing the state repeatedly.
-- **Attribution** walks each process for its working directory, so a session shows as its folder, not a bare pid.
+- **Turn detection** estimates activity from the CPU an agent and the processes it started use, and from recent transcript writes. The agent's own CPU counts from 4% of a core; the processes it started count once they average a fifth of a core over 30 seconds, so brief helpers such as a status line do not. Claude Code gets the most direct signals. A shell command the session started and that is still running (a long tool call, or a job it put in the background and will come back to) counts as working once it is 15 seconds old, while its processes keep using CPU (at least 5 CPU-seconds every 10 minutes), for at most 3 hours. Otherwise Crema uses Claude's own busy or idle status from `sessions/<pid>.json` in its config directory when that file exists, else the write time of that session's transcript, else the newest transcript in its project folder when no other watched agent shares that folder. Other agents use CPU activity. Both signals can miss long, quiet steps. A short sticky window keeps brief pauses from changing the state repeatedly.
+- **Attribution** names each session from Claude Code's own session record, else a cleaned-up folder name. The app it runs in is the nearest parent process that is a GUI app. Each Claude process is read from its own `CLAUDE_CONFIG_DIR`, so several accounts on one Mac work without setup; a non-default account is labeled (`personal` for `~/.claude-personal`). The row also names the command a running shell job is busiest with (`xcodebuild running`). Claude Code's daemon, its unclaimed background workers and its bundled tools, and the Codex app server's supervisor, are not counted as sessions. A background worker that a session has claimed counts like any other session.
 
 The engine lives in `CremaCore` and is covered by unit tests, including an integration test that creates a real assertion and confirms macOS lists it via `pmset -g assertions`. App tests hold a scan open to check that Pause, timers, the screen switch, and rule changes survive its completion. The awake ledger records confirmed system holds, including when macOS refuses a requested hold.
 
@@ -95,9 +95,12 @@ Presets ship for the agents below and are enabled by default. Claude Code uses r
 
 Known gaps, stated here so you do not find them the hard way:
 
-- Working and waiting are estimates. A long network wait, or a tool call whose processes average under a fifth of a core over 30 seconds, can read as waiting: for Claude Code after about 2.5 minutes without a transcript write, for agents watched by CPU within seconds. A busy background process an agent started, such as a dev server or a watcher, keeps that session working while it uses CPU. Multiple watched agents in one directory use CPU activity only. Use a manual hold when a long unattended job must stay awake.
+- Working and waiting are estimates. A long network wait, or a tool call whose processes average under a fifth of a core over 30 seconds, can read as waiting: for Claude Code after about 2.5 minutes without a transcript write, for agents watched by CPU within seconds. A busy background process an agent started, such as a dev server or a watcher, keeps that session working while it uses CPU. Multiple watched agents in one directory use CPU activity only, unless Claude Code reports which session each one is. Use a manual hold when a long unattended job must stay awake.
 - Closing the lid on battery sleeps the Mac, by design. Lid open or clamshell mode are the supported shapes. See [Leave the lid open](#leave-the-lid-open).
 - Crema only sees its own holds. A stray hand-started caffeinate or another app's assertion is invisible to it for now; the radar for that is the top roadmap item.
+- Session names and the busy or idle status come from `sessions/<pid>.json`, a file Claude Code writes for itself, not a documented interface. If it changes, Crema falls back to folder names and the CPU and transcript signals. A Claude Code process stuck in busy keeps reading as working.
+- A background command Claude Code starts, such as a dev server or a watcher, keeps that session working while it uses at least 5 CPU-seconds every 10 minutes, up to 3 hours, even when Claude itself is idle. A busy idle server can still hold for the full 3 hours; a quiet job, such as one that sleeps between checks, can stop counting after 10 minutes. Other agents' shell commands are not tracked this way yet.
+- A Codex app server hosts many threads in one process, so it shows as one session named after its folder.
 - Apple Silicon only, macOS 13+.
 
 ## Status

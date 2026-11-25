@@ -16,6 +16,14 @@ public struct ScannedProcess: Equatable {
     public let childCPUNanos: UInt64 // CPU of children this process has reaped, nanoseconds
     public let startTime: Date      // process start
     public var cwd: String          // best-effort working directory, "" if unavailable
+    /// Set by the session scanner for an agent's own background helpers
+    /// (Claude Code's daemon and its bg-pty-host / bg-spare processes). They
+    /// share the agent's binary but are not sessions.
+    public var isAgentHelper = false
+    /// Lowercased path components plus the basename, for rule matching.
+    /// Computed once: matching runs per process, per rule, several times a scan.
+    public let tokens: Set<String>
+    private let lowercasedName: String
 
     public init(pid: pid_t, ppid: pid_t, name: String, path: String = "",
                 cpuNanos: UInt64, childCPUNanos: UInt64 = 0, startTime: Date, cwd: String) {
@@ -27,6 +35,10 @@ public struct ScannedProcess: Equatable {
         self.childCPUNanos = childCPUNanos
         self.startTime = startTime
         self.cwd = cwd
+        self.lowercasedName = name.lowercased()
+        var tokens = Set(path.split(separator: "/").map { $0.lowercased() })
+        tokens.insert(lowercasedName)
+        self.tokens = tokens
     }
 
     /// True when the executable lives inside a .app bundle. Installed CLI
@@ -36,18 +48,11 @@ public struct ScannedProcess: Equatable {
         path.contains("/Contents/MacOS/") || path.contains(".app/")
     }
 
-    /// Lowercased path components plus the basename, for rule matching.
-    public var tokens: Set<String> {
-        var set = Set(path.split(separator: "/").map { $0.lowercased() })
-        set.insert(name.lowercased())
-        return set
-    }
-
     /// True when `pattern` names this process: an exact token (a path
     /// component or the basename), or a substring of the basename.
     public func matches(pattern: String) -> Bool {
         let needle = pattern.lowercased()
-        if name.lowercased().contains(needle) { return true }
+        if lowercasedName.contains(needle) { return true }
         return tokens.contains(needle)
     }
 }
@@ -157,6 +162,51 @@ public struct ProcessScanner {
         guard numer != denom, denom != 0 else { return ticks }
         let n = UInt64(numer), d = UInt64(denom)
         return (ticks / d) * n + (ticks % d) * n / d
+    }
+
+    /// The process's argv, plus only the named environment variables, via
+    /// KERN_PROCARGS2; empty when the OS declines. Read only for the few agent
+    /// processes that need it. The rest of the environment is never copied.
+    /// macOS hides the environment of Apple platform binaries; agents are not.
+    public static func commandLine(for pid: pid_t, environmentKeys: Set<String> = [])
+        -> (arguments: [String], environment: [String: String]) {
+        var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
+        var size = 0
+        guard sysctl(&mib, 3, nil, &size, nil, 0) == 0 else { return ([], [:]) }
+        var buffer = [UInt8](repeating: 0, count: size)
+        guard sysctl(&mib, 3, &buffer, &size, nil, 0) == 0 else { return ([], [:]) }
+        return parseProcArgs(Array(buffer.prefix(size)), environmentKeys: environmentKeys)
+    }
+
+    /// Parses a KERN_PROCARGS2 buffer: argc (Int32), the exec path, NUL
+    /// padding, argc NUL-terminated arguments, then NUL-terminated KEY=VALUE
+    /// environment strings up to an empty one.
+    static func parseProcArgs(_ buffer: [UInt8], environmentKeys: Set<String>)
+        -> (arguments: [String], environment: [String: String]) {
+        let size = buffer.count
+        guard size > MemoryLayout<Int32>.size else { return ([], [:]) }
+        let argc = buffer.withUnsafeBytes { $0.loadUnaligned(as: Int32.self) }
+        var index = MemoryLayout<Int32>.size
+        while index < size, buffer[index] != 0 { index += 1 }   // exec path
+        while index < size, buffer[index] == 0 { index += 1 }   // padding
+        func nextString() -> String {
+            let start = index
+            while index < size, buffer[index] != 0 { index += 1 }
+            defer { index += 1 }
+            return String(decoding: buffer[start..<index], as: UTF8.self)
+        }
+        var args: [String] = []
+        while args.count < Int(argc), index < size { args.append(nextString()) }
+        var environment: [String: String] = [:]
+        while index < size, !environmentKeys.isEmpty {
+            let entry = nextString()
+            if entry.isEmpty { break }
+            if let equals = entry.firstIndex(of: "="),
+               environmentKeys.contains(String(entry[..<equals])) {
+                environment[String(entry[..<equals])] = String(entry[entry.index(after: equals)...])
+            }
+        }
+        return (args, environment)
     }
 
     /// Working directory via PROC_PIDVNODEPATHINFO. Works for same-user

@@ -218,3 +218,107 @@ private final class BlockingScanner: SessionScanning {
         condition.broadcast()
     }
 }
+
+final class SessionScannerHelperTests: XCTestCase {
+    func testRecognizesClaudeHelpers() {
+        XCTAssertTrue(SessionScanner.isClaudeHelper(["/usr/local/bin/claude", "daemon", "run"]))
+        XCTAssertTrue(SessionScanner.isClaudeHelper(["claude bg-pty-host", "--bg-pty-host", "/tmp/x.sock"]))
+        XCTAssertTrue(SessionScanner.isClaudeHelper(["claude bg-spare", "--bg-spare", "/tmp/y.sock"]))
+        XCTAssertTrue(SessionScanner.isClaudeHelper(["ugrep", "-G", "--ignore-files"]))
+        XCTAssertFalse(SessionScanner.isClaudeHelper(["claude", "--output-format", "stream-json"]))
+        XCTAssertFalse(SessionScanner.isClaudeHelper(["/Users/me/.local/share/claude/versions/2.1.332", "--resume"]))
+        // A wrapper or symlink under another name is still a session.
+        XCTAssertFalse(SessionScanner.isClaudeHelper(["cc", "--continue"]))
+        XCTAssertFalse(SessionScanner.isClaudeHelper([]))
+    }
+
+    func testReadsClaudeSessionIDFromArguments() {
+        XCTAssertEqual(SessionScanner.claudeSessionID(["claude", "--session-id=abc"]), "abc")
+        XCTAssertEqual(SessionScanner.claudeSessionID(["claude", "--resume", "def", "--verbose"]), "def")
+        XCTAssertNil(SessionScanner.claudeSessionID(["claude", "--resume", "--verbose"]))
+        XCTAssertNil(SessionScanner.claudeSessionID(["claude"]))
+    }
+
+    func testRecognizesCodexSupervisor() {
+        XCTAssertTrue(SessionScanner.isCodexHelper(["/x/codex", "app-server", "daemon", "pid-update-loop"]))
+        XCTAssertFalse(SessionScanner.isCodexHelper(["/x/codex", "app-server", "--listen", "unix://"]))
+        XCTAssertFalse(SessionScanner.isCodexHelper(["codex"]))
+    }
+
+    func testFindsHostAppAmongAncestors() {
+        func proc(_ pid: pid_t, _ ppid: pid_t, _ path: String) -> ScannedProcess {
+            ScannedProcess(pid: pid, ppid: ppid, name: (path as NSString).lastPathComponent, path: path,
+                           cpuNanos: 0, startTime: Date(), cwd: "")
+        }
+        let app = proc(10, 1, "/Applications/T3 Code (Nightly).app/Contents/MacOS/T3 Code (Nightly)")
+        let shell = proc(11, 10, "/bin/zsh")
+        let agent = proc(12, 11, "/usr/local/bin/claude")
+        let daemon = proc(13, 1, "/usr/local/bin/claude")
+        let byPID = Dictionary(uniqueKeysWithValues: [app, shell, agent, daemon].map { ($0.pid, $0) })
+        XCTAssertEqual(SessionScanner.hostApp(of: agent, in: byPID), "T3 Code (Nightly)")
+        XCTAssertNil(SessionScanner.hostApp(of: daemon, in: byPID))
+
+        let helper = proc(20, 10, "/Applications/Visual Studio Code.app/Contents/Frameworks/Code Helper (Plugin).app/Contents/MacOS/Code Helper (Plugin)")
+        let vscodeAgent = proc(21, 20, "/usr/local/bin/claude")
+        var withHelper = byPID; withHelper[20] = helper; withHelper[21] = vscodeAgent
+        XCTAssertEqual(SessionScanner.hostApp(of: vscodeAgent, in: withHelper), "Visual Studio Code")
+    }
+
+    func testLabelsClaudeAccounts() {
+        XCTAssertEqual(SessionScanner.accountLabel(configDir: NSHomeDirectory() + "/.claude-personal"), "personal")
+        XCTAssertEqual(SessionScanner.accountLabel(configDir: "/Volumes/work/claude-config"), "claude-config")
+        XCTAssertEqual(SessionScanner.accountLabel(configDir: NSHomeDirectory() + "/.claude-work/"), "work")
+        XCTAssertNil(SessionScanner.accountLabel(configDir: NSHomeDirectory() + "/.claude"))
+        XCTAssertNil(SessionScanner.accountLabel(configDir: NSHomeDirectory() + "/.claude/"))
+    }
+
+    func testDescribesShellJobs() {
+        XCTAssertEqual(SessionScanner.activityLabel([.init(shellPID: 1, label: "xcodebuild")]),
+                       "xcodebuild running")
+        XCTAssertEqual(SessionScanner.activityLabel([.init(shellPID: 1, label: nil)]),
+                       "command running")
+        XCTAssertEqual(SessionScanner.activityLabel([.init(shellPID: 1, label: "a"),
+                                                     .init(shellPID: 2, label: "b")]),
+                       "2 commands running")
+    }
+}
+
+final class FolderLabelTests: XCTestCase {
+    func label(_ folder: String) -> String {
+        AgentSession(pid: 1, ppid: 0, ruleID: "r", processName: "claude", displayName: "Claude Code",
+                     folder: folder, isWorking: false, startedAt: Date(), lastActive: Date()).folderLabel
+    }
+
+    func testCleansT3Folders() {
+        XCTAssertEqual(label("/Users/me/.t3/worktrees/coloring/t3-f9dac1b0-b7e814c026d9e928"), "coloring (worktree)")
+        XCTAssertEqual(label("/Users/me/.t3/scratch/2026-11-25-check-if-crema-code-can-5c2ecd38"), "check if crema code can")
+    }
+
+    func testUsesProjectNameElsewhere() {
+        XCTAssertEqual(label("/Users/me/Documents/projects/experiments/coloring"), "coloring")
+        XCTAssertEqual(label(""), "")
+    }
+}
+
+@MainActor
+final class SessionDetailTests: XCTestCase {
+    func testDetailDropsHostThenFolder() {
+        var session = AgentSession(pid: 1, ppid: 0, ruleID: "agent.claude", processName: "claude",
+                                   displayName: "Claude Code", folder: "/Users/me/dev/checkout-service",
+                                   isWorking: true, startedAt: Date(), lastActive: Date())
+        session.title = "Checkout retry logic"
+        session.host = "T3 Code"
+        session.account = "personal"
+        session.activity = "xcodebuild running"
+        XCTAssertEqual(PopoverView().sessionDetailVariants(session), [
+            "working · xcodebuild running · T3 Code · personal · checkout-service",
+            "working · xcodebuild running · personal · checkout-service",
+            "working · xcodebuild running · personal",
+        ])
+
+        session.title = nil
+        session.host = nil
+        XCTAssertEqual(PopoverView().sessionDetailVariants(session), ["working · xcodebuild running · personal"])
+    }
+}
+
