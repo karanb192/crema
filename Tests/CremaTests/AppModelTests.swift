@@ -299,3 +299,26 @@ final class FolderLabelTests: XCTestCase {
         XCTAssertEqual(label(""), "")
     }
 }
+
+@MainActor
+final class SessionDetailTests: XCTestCase {
+    func testDetailDropsHostThenFolder() {
+        var session = AgentSession(pid: 1, ppid: 0, ruleID: "agent.claude", processName: "claude",
+                                   displayName: "Claude Code", folder: "/Users/me/dev/checkout-service",
+                                   isWorking: true, startedAt: Date(), lastActive: Date())
+        session.title = "Checkout retry logic"
+        session.host = "T3 Code"
+        session.account = "personal"
+        session.activity = "xcodebuild running"
+        XCTAssertEqual(PopoverView().sessionDetailVariants(session), [
+            "working · xcodebuild running · T3 Code · personal · checkout-service",
+            "working · xcodebuild running · personal · checkout-service",
+            "working · xcodebuild running · personal",
+        ])
+
+        session.title = nil
+        session.host = nil
+        XCTAssertEqual(PopoverView().sessionDetailVariants(session), ["working · xcodebuild running · personal"])
+    }
+}
+

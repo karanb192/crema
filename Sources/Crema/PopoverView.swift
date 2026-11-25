@@ -156,10 +156,14 @@ struct PopoverView: View {
                     .font(.system(size: 11.5, weight: .medium))
                     .lineLimit(1)
                     .truncationMode(.tail)
-                Text(sessionDetail(session))
-                    .font(.system(size: 10))
-                    .lineLimit(1)
-                    .foregroundStyle(.secondary)
+                // Longest variant that fits on one line; the last one truncates.
+                ViewThatFits(in: .horizontal) {
+                    ForEach(sessionDetailVariants(session), id: \.self) { detail in
+                        Text(detail).lineLimit(1)
+                    }
+                }
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
             }
             Spacer()
         }
@@ -176,18 +180,25 @@ struct PopoverView: View {
         return session.folderLabel.isEmpty ? "pid \(session.pid)" : session.folderLabel
     }
 
-    /// "working · xcodebuild running · T3 Code · personal · coloring": state,
-    /// what runs right now, launching app, account, and the folder when the
-    /// title line does not already show it.
-    private func sessionDetail(_ session: AgentSession) -> String {
-        var parts = [session.isWorking ? "working" : "waiting for you"]
-        if let activity = session.activity { parts.append(activity) }
-        if let host = session.host { parts.append(host) }
-        if let account = session.account { parts.append(account) }
-        if session.title?.isEmpty == false, !session.folderLabel.isEmpty {
-            parts.append(session.folderLabel)
+    /// The detail line from fullest to shortest, for the popover to pick the
+    /// first that fits: "working · xcodebuild running · T3 Code · personal ·
+    /// checkout-service", then without the host app, then without the folder.
+    /// State, running command and account always stay.
+    func sessionDetailVariants(_ session: AgentSession) -> [String] {
+        let state = session.isWorking ? "working" : "waiting for you"
+        let folder = session.title?.isEmpty == false && !session.folderLabel.isEmpty ? session.folderLabel : nil
+        func line(host: Bool, folder includeFolder: Bool) -> String {
+            [state, session.activity, host ? session.host : nil, session.account,
+             includeFolder ? folder : nil]
+                .compactMap { $0 }
+                .joined(separator: " · ")
         }
-        return parts.joined(separator: " · ")
+        var variants: [String] = []
+        for candidate in [line(host: true, folder: true), line(host: false, folder: true),
+                          line(host: false, folder: false)] where !variants.contains(candidate) {
+            variants.append(candidate)
+        }
+        return variants
     }
 
     /// Manual holds, two axes. The chip row is the duration: quick presets
