@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import CremaCore
 
 /// The popover shown when the menu bar cup is clicked. Header verdict, the
@@ -22,8 +23,15 @@ struct PopoverView: View {
             footer
         }
         .frame(width: 320)
-        // Fresh state on open, even between the slower idle scans.
+        // Fresh state on open, even between the slower idle scans. A
+        // .window MenuBarExtra can keep this view alive between opens, so
+        // onAppear alone may fire only once; its window becoming key fires on
+        // every open. Crema has no other window. tick() skips a scan already
+        // in flight, so both firing is harmless.
         .onAppear { model.tick() }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
+            model.tick()
+        }
     }
 
     // MARK: - Sections
