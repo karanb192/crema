@@ -164,27 +164,49 @@ public struct ProcessScanner {
         return (ticks / d) * n + (ticks % d) * n / d
     }
 
-    /// The process's argv via KERN_PROCARGS2, or [] when the OS declines.
-    /// Read only for the few agent processes that need it.
-    public static func arguments(for pid: pid_t) -> [String] {
+    /// The process's argv, plus only the named environment variables, via
+    /// KERN_PROCARGS2; empty when the OS declines. Read only for the few agent
+    /// processes that need it. The rest of the environment is never copied.
+    /// macOS hides the environment of Apple platform binaries; agents are not.
+    public static func commandLine(for pid: pid_t, environmentKeys: Set<String> = [])
+        -> (arguments: [String], environment: [String: String]) {
         var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
         var size = 0
-        guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > MemoryLayout<Int32>.size else { return [] }
+        guard sysctl(&mib, 3, nil, &size, nil, 0) == 0 else { return ([], [:]) }
         var buffer = [UInt8](repeating: 0, count: size)
-        guard sysctl(&mib, 3, &buffer, &size, nil, 0) == 0, size > MemoryLayout<Int32>.size else { return [] }
-        // Layout: argc (Int32), exec path, NUL padding, then argc NUL-terminated args.
+        guard sysctl(&mib, 3, &buffer, &size, nil, 0) == 0 else { return ([], [:]) }
+        return parseProcArgs(Array(buffer.prefix(size)), environmentKeys: environmentKeys)
+    }
+
+    /// Parses a KERN_PROCARGS2 buffer: argc (Int32), the exec path, NUL
+    /// padding, argc NUL-terminated arguments, then NUL-terminated KEY=VALUE
+    /// environment strings up to an empty one.
+    static func parseProcArgs(_ buffer: [UInt8], environmentKeys: Set<String>)
+        -> (arguments: [String], environment: [String: String]) {
+        let size = buffer.count
+        guard size > MemoryLayout<Int32>.size else { return ([], [:]) }
         let argc = buffer.withUnsafeBytes { $0.loadUnaligned(as: Int32.self) }
         var index = MemoryLayout<Int32>.size
         while index < size, buffer[index] != 0 { index += 1 }   // exec path
         while index < size, buffer[index] == 0 { index += 1 }   // padding
-        var args: [String] = []
-        while args.count < Int(argc), index < size {
+        func nextString() -> String {
             let start = index
             while index < size, buffer[index] != 0 { index += 1 }
-            args.append(String(decoding: buffer[start..<index], as: UTF8.self))
-            index += 1
+            defer { index += 1 }
+            return String(decoding: buffer[start..<index], as: UTF8.self)
         }
-        return args
+        var args: [String] = []
+        while args.count < Int(argc), index < size { args.append(nextString()) }
+        var environment: [String: String] = [:]
+        while index < size, !environmentKeys.isEmpty {
+            let entry = nextString()
+            if entry.isEmpty { break }
+            if let equals = entry.firstIndex(of: "="),
+               environmentKeys.contains(String(entry[..<equals])) {
+                environment[String(entry[..<equals])] = String(entry[entry.index(after: equals)...])
+            }
+        }
+        return (args, environment)
     }
 
     /// Working directory via PROC_PIDVNODEPATHINFO. Works for same-user

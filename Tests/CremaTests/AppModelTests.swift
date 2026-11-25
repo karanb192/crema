@@ -221,16 +221,15 @@ private final class BlockingScanner: SessionScanning {
 
 final class SessionScannerHelperTests: XCTestCase {
     func testRecognizesClaudeHelpers() {
-        func helper(_ args: [String]) -> Bool {
-            SessionScanner.isClaudeHelper(args, executableName: "2.1.332")
-        }
-        XCTAssertTrue(helper(["/usr/local/bin/claude", "daemon", "run"]))
-        XCTAssertTrue(helper(["claude bg-pty-host", "--bg-pty-host", "/tmp/x.sock"]))
-        XCTAssertTrue(helper(["claude bg-spare", "--bg-spare", "/tmp/y.sock"]))
-        XCTAssertTrue(helper(["ugrep", "-G", "--ignore-files"]))
-        XCTAssertFalse(helper(["claude", "--output-format", "stream-json"]))
-        XCTAssertFalse(helper(["/Users/me/.local/share/claude/versions/2.1.332", "--resume"]))
-        XCTAssertFalse(helper([]))
+        XCTAssertTrue(SessionScanner.isClaudeHelper(["/usr/local/bin/claude", "daemon", "run"]))
+        XCTAssertTrue(SessionScanner.isClaudeHelper(["claude bg-pty-host", "--bg-pty-host", "/tmp/x.sock"]))
+        XCTAssertTrue(SessionScanner.isClaudeHelper(["claude bg-spare", "--bg-spare", "/tmp/y.sock"]))
+        XCTAssertTrue(SessionScanner.isClaudeHelper(["ugrep", "-G", "--ignore-files"]))
+        XCTAssertFalse(SessionScanner.isClaudeHelper(["claude", "--output-format", "stream-json"]))
+        XCTAssertFalse(SessionScanner.isClaudeHelper(["/Users/me/.local/share/claude/versions/2.1.332", "--resume"]))
+        // A wrapper or symlink under another name is still a session.
+        XCTAssertFalse(SessionScanner.isClaudeHelper(["cc", "--continue"]))
+        XCTAssertFalse(SessionScanner.isClaudeHelper([]))
     }
 
     func testReadsClaudeSessionIDFromArguments() {
@@ -258,6 +257,29 @@ final class SessionScannerHelperTests: XCTestCase {
         let byPID = Dictionary(uniqueKeysWithValues: [app, shell, agent, daemon].map { ($0.pid, $0) })
         XCTAssertEqual(SessionScanner.hostApp(of: agent, in: byPID), "T3 Code (Nightly)")
         XCTAssertNil(SessionScanner.hostApp(of: daemon, in: byPID))
+
+        let helper = proc(20, 10, "/Applications/Visual Studio Code.app/Contents/Frameworks/Code Helper (Plugin).app/Contents/MacOS/Code Helper (Plugin)")
+        let vscodeAgent = proc(21, 20, "/usr/local/bin/claude")
+        var withHelper = byPID; withHelper[20] = helper; withHelper[21] = vscodeAgent
+        XCTAssertEqual(SessionScanner.hostApp(of: vscodeAgent, in: withHelper), "Visual Studio Code")
+    }
+
+    func testLabelsClaudeAccounts() {
+        XCTAssertEqual(SessionScanner.accountLabel(configDir: NSHomeDirectory() + "/.claude-personal"), "personal")
+        XCTAssertEqual(SessionScanner.accountLabel(configDir: "/Volumes/work/claude-config"), "claude-config")
+        XCTAssertEqual(SessionScanner.accountLabel(configDir: NSHomeDirectory() + "/.claude-work/"), "work")
+        XCTAssertNil(SessionScanner.accountLabel(configDir: NSHomeDirectory() + "/.claude"))
+        XCTAssertNil(SessionScanner.accountLabel(configDir: NSHomeDirectory() + "/.claude/"))
+    }
+
+    func testDescribesShellJobs() {
+        XCTAssertEqual(SessionScanner.activityLabel([.init(shellPID: 1, label: "xcodebuild")]),
+                       "xcodebuild running")
+        XCTAssertEqual(SessionScanner.activityLabel([.init(shellPID: 1, label: nil)]),
+                       "command running")
+        XCTAssertEqual(SessionScanner.activityLabel([.init(shellPID: 1, label: "a"),
+                                                     .init(shellPID: 2, label: "b")]),
+                       "2 commands running")
     }
 }
 

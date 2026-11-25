@@ -157,6 +157,8 @@ final class AppModel: ObservableObject {
             let details = latestScan.details[newSessions[index].pid]
             newSessions[index].title = details?.title
             newSessions[index].host = details?.host
+            newSessions[index].account = details?.account
+            newSessions[index].activity = details?.activity
         }
         // Publish only real changes, so an unchanged scan does not redraw the popover.
         if newSessions != sessions { sessions = newSessions }

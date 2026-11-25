@@ -176,11 +176,14 @@ struct PopoverView: View {
         return session.folderLabel.isEmpty ? "pid \(session.pid)" : session.folderLabel
     }
 
-    /// "working · T3 Code · coloring": state, launching app, and the folder
-    /// when the title line does not already show it.
+    /// "working · xcodebuild running · T3 Code · personal · coloring": state,
+    /// what runs right now, launching app, account, and the folder when the
+    /// title line does not already show it.
     private func sessionDetail(_ session: AgentSession) -> String {
         var parts = [session.isWorking ? "working" : "waiting for you"]
+        if let activity = session.activity { parts.append(activity) }
         if let host = session.host { parts.append(host) }
+        if let account = session.account { parts.append(account) }
         if session.title?.isEmpty == false, !session.folderLabel.isEmpty {
             parts.append(session.folderLabel)
         }

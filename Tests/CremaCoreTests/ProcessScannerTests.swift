@@ -78,4 +78,31 @@ final class ProcessScannerTests: XCTestCase {
         XCTAssertGreaterThan(kernelDelta, 100_000_000)
         XCTAssertEqual(scannedDelta / kernelDelta, 1, accuracy: 0.25)
     }
+
+    func testReadsChildArguments() throws {
+        let child = Process()
+        child.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        child.arguments = ["30"]
+        try child.run()
+        defer { child.terminate() }
+        XCTAssertEqual(ProcessScanner.commandLine(for: child.processIdentifier).arguments, ["/bin/sleep", "30"])
+    }
+
+    func testParsesProcArgsBufferKeepingOnlyRequestedEnvironment() {
+        func buffer(argc: Int32, _ strings: [String], padding: Int = 3) -> [UInt8] {
+            var bytes = withUnsafeBytes(of: argc.littleEndian) { Array($0) }
+            bytes += Array("/usr/local/bin/claude".utf8) + [0] + Array(repeating: 0, count: padding)
+            for string in strings { bytes += Array(string.utf8) + [0] }
+            return bytes + [0]
+        }
+        let parsed = ProcessScanner.parseProcArgs(
+            buffer(argc: 2, ["claude", "--resume", "CLAUDE_CONFIG_DIR=/x/.claude-work", "TOKEN=secret", "A=b=c"]),
+            environmentKeys: ["CLAUDE_CONFIG_DIR", "A"])
+        XCTAssertEqual(parsed.arguments, ["claude", "--resume"])
+        XCTAssertEqual(parsed.environment, ["CLAUDE_CONFIG_DIR": "/x/.claude-work", "A": "b=c"])
+
+        XCTAssertTrue(ProcessScanner.parseProcArgs(buffer(argc: 1, ["claude", "TOKEN=secret"]),
+                                                   environmentKeys: []).environment.isEmpty)
+        XCTAssertEqual(ProcessScanner.parseProcArgs([1, 0], environmentKeys: []).arguments, [])
+    }
 }

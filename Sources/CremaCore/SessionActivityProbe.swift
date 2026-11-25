@@ -1,20 +1,22 @@
 import Foundation
 
 /// What Claude Code reports about one of its own processes in
-/// `~/.claude/sessions/<pid>.json`. Every field is optional: the file is not a
-/// documented format, so anything missing falls back to the other signals.
+/// `<config dir>/sessions/<pid>.json`. Every field is optional: the file is not
+/// a documented format, so anything missing falls back to the other signals.
 public struct ClaudeSessionInfo: Equatable {
     public var sessionID: String?
     public var name: String?        // session title, e.g. a T3 Code thread name
     public var status: String?      // "busy" while mid-turn, "idle" at a prompt
     public var entrypoint: String?  // e.g. "t3-code"
+    public var cwd: String?         // the session's project directory
 
     public init(sessionID: String? = nil, name: String? = nil,
-                status: String? = nil, entrypoint: String? = nil) {
+                status: String? = nil, entrypoint: String? = nil, cwd: String? = nil) {
         self.sessionID = sessionID
         self.name = name
         self.status = status
         self.entrypoint = entrypoint
+        self.cwd = cwd
     }
 
     /// True or false when Claude reported a known status, nil otherwise.
@@ -34,15 +36,12 @@ public struct ClaudeSessionInfo: Equatable {
     }
 }
 
-/// The precise per-session turn signal: how recently an agent wrote to its own
-/// transcript. An agent mid-turn appends as each message and tool result lands,
-/// even while it is network-bound and burning almost no local CPU, but appends
-/// nothing while a single tool call runs. An agent parked at a prompt does not
-/// write at all until you reply.
-///
-/// Claude Code is implemented precisely here: it maps a session's working
-/// directory to its transcript folder under ~/.claude/projects. Other agents
-/// fall back to the CPU signal until their layout is added.
+/// The precise per-session turn signals for Claude Code: its own session
+/// record, and how recently it wrote to its transcript. An agent mid-turn
+/// appends as each message and tool result lands, even while it is
+/// network-bound and burning almost no local CPU, but appends nothing while a
+/// single tool call runs. An agent parked at a prompt does not write at all
+/// until you reply. Other agents fall back to the CPU signal.
 public struct SessionActivityProbe {
     private let fileManager = FileManager.default
     private let projectsRoot: String
@@ -54,33 +53,50 @@ public struct SessionActivityProbe {
         self.sessionsRoot = sessionsRoot
     }
 
-    /// Claude Code names a project folder after its path with every character
-    /// that is not an ASCII letter or digit replaced by "-". So
+    /// A probe for one Claude Code config directory: `CLAUDE_CONFIG_DIR` when
+    /// the process sets it (a second account, for example), else ~/.claude.
+    public init(claudeConfigDir: String) {
+        self.init(projectsRoot: claudeConfigDir + "/projects", sessionsRoot: claudeConfigDir + "/sessions")
+    }
+
+    /// Claude Code names a project folder after its path with every UTF-16
+    /// code unit that is not an ASCII letter or digit replaced by "-". So
     /// "/Users/me/.t3/my_app" becomes "-Users-me--t3-my-app".
     public static func encodeProjectPath(_ cwd: String) -> String {
-        String(cwd.unicodeScalars.map { scalar -> Character in
-            scalar.isASCII && CharacterSet.alphanumerics.contains(scalar) ? Character(scalar) : "-"
+        String(cwd.utf16.map { unit -> Character in
+            switch unit {
+            case 0x30...0x39, 0x41...0x5A, 0x61...0x7A: return Character(Unicode.Scalar(unit)!)
+            default: return "-"
+            }
         })
     }
 
-    /// Reads `~/.claude/sessions/<pid>.json`, or nil if absent or unreadable.
-    public func claudeSession(pid: pid_t) -> ClaudeSessionInfo? {
+    /// Reads `sessions/<pid>.json`, or nil if absent, unreadable, or left by an
+    /// earlier process that had the same pid. `processStart` is the kernel's
+    /// start time for the live process. Claude writes `startedAt` a second or
+    /// more after launch, later on a busy Mac, so only a record that predates
+    /// the process belongs to someone else.
+    public func claudeSession(pid: pid_t, processStart: Date) -> ClaudeSessionInfo? {
         let path = sessionsRoot + "/\(pid).json"
         guard let data = fileManager.contents(atPath: path),
               let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
         else { return nil }
-        // A stale file from an earlier process with a reused pid is ignored.
         if let filePID = json["pid"] as? Int, filePID != Int(pid) { return nil }
+        if let startedMillis = json["startedAt"] as? Double,
+           startedMillis / 1000 < processStart.timeIntervalSince1970 - 5 {
+            return nil
+        }
         return ClaudeSessionInfo(sessionID: json["sessionId"] as? String,
                                  name: json["name"] as? String,
                                  status: json["status"] as? String,
-                                 entrypoint: json["entrypoint"] as? String)
+                                 entrypoint: json["entrypoint"] as? String,
+                                 cwd: json["cwd"] as? String)
     }
 
     /// Last transcript write for a Claude Code session with this working
-    /// directory, or nil if none is found. `cwd` comes from the process scanner.
-    /// With a session id, only that session's transcript is checked (one stat);
-    /// without one, the newest transcript in the project folder counts.
+    /// directory, or nil if none is found. With a session id, only that
+    /// session's transcript is checked (one stat); without one, the newest
+    /// transcript in the project folder counts.
     public func lastClaudeWrite(cwd: String, sessionID: String? = nil) -> Date? {
         guard !cwd.isEmpty else { return nil }
         let dir = projectsRoot + "/" + Self.encodeProjectPath(cwd)
@@ -102,5 +118,32 @@ public struct SessionActivityProbe {
             if newest == nil || modified > newest! { newest = modified }
         }
         return newest
+    }
+}
+
+/// The order Claude Code's signals are trusted in, as one pure function.
+/// Returns the moment the session last counted as active, or nil.
+public enum ClaudeTurnSignal {
+    /// 1. A running shell job the session started: working now, even when
+    ///    Claude reports idle while it waits on a background command.
+    /// 2. Claude's own busy / idle status.
+    /// 3. The session's own transcript, when its id is known.
+    /// 4. The newest transcript in its project folder, only when no other
+    ///    watched agent shares that folder (`directoryTranscript` is nil then).
+    public static func lastActive(hasRunningJob: Bool,
+                                  isBusy: Bool?,
+                                  sessionTranscript: (() -> Date?)?,
+                                  directoryTranscript: (() -> Date?)?,
+                                  now: Date) -> Date? {
+        if hasRunningJob { return now }
+        if let isBusy { return isBusy ? now : nil }
+        // A session id taken from argv can be stale (after /clear), pointing
+        // at an old transcript, so the folder's newest write wins when allowed.
+        let session = sessionTranscript?()
+        let directory = directoryTranscript?()
+        switch (session, directory) {
+        case let (s?, d?): return max(s, d)
+        default: return session ?? directory
+        }
     }
 }
