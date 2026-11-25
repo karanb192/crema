@@ -152,12 +152,13 @@ struct PopoverView: View {
                 .fill(session.isWorking ? crema : Color.secondary.opacity(0.4))
                 .frame(width: 6, height: 6)
             VStack(alignment: .leading, spacing: 0) {
-                Text(session.shortFolder.isEmpty ? "pid \(session.pid)" : session.shortFolder)
-                    .font(.system(size: 11.5, design: .monospaced))
+                Text(sessionName(session))
+                    .font(.system(size: 11.5, weight: .medium))
                     .lineLimit(1)
-                    .truncationMode(.head)
-                Text(session.isWorking ? "working" : "waiting for you")
+                    .truncationMode(.tail)
+                Text(sessionDetail(session))
                     .font(.system(size: 10))
+                    .lineLimit(1)
                     .foregroundStyle(.secondary)
             }
             Spacer()
@@ -166,6 +167,24 @@ struct PopoverView: View {
         .padding(.trailing, 14)
         .padding(.vertical, 3)
         .opacity(session.isWorking ? 1 : 0.65)
+        .help(session.shortFolder)   // full path on hover
+    }
+
+    /// Thread title when the agent or its app reports one, else the folder.
+    private func sessionName(_ session: AgentSession) -> String {
+        if let title = session.title, !title.isEmpty { return title }
+        return session.folderLabel.isEmpty ? "pid \(session.pid)" : session.folderLabel
+    }
+
+    /// "working · T3 Code · coloring": state, launching app, and the folder
+    /// when the title line does not already show it.
+    private func sessionDetail(_ session: AgentSession) -> String {
+        var parts = [session.isWorking ? "working" : "waiting for you"]
+        if let host = session.host { parts.append(host) }
+        if session.title?.isEmpty == false, !session.folderLabel.isEmpty {
+            parts.append(session.folderLabel)
+        }
+        return parts.joined(separator: " · ")
     }
 
     /// Manual holds, two axes. The chip row is the duration: quick presets

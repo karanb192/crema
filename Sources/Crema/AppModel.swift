@@ -55,6 +55,7 @@ final class AppModel: ObservableObject {
         let timer = Timer.scheduledTimer(withTimeInterval: scanInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
         }
+        timer.tolerance = 1   // let macOS coalesce wakeups; a scan a second late is fine
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
     }
@@ -148,22 +149,31 @@ final class AppModel: ObservableObject {
 
         let result = engine.evaluate(rules: rules, processes: latestScan.processes,
                                      workingPIDs: latestScan.workingPIDs)
-        sessions = engine.sessions(
+        var newSessions = engine.sessions(
             rules: rules, processes: latestScan.processes, workingPIDs: latestScan.workingPIDs,
             lastActive: { latestScan.lastActive[$0] }
         )
-        runningBatchRuleIDs = result.runningBatchRuleIDs
+        for index in newSessions.indices {
+            let details = latestScan.details[newSessions[index].pid]
+            newSessions[index].title = details?.title
+            newSessions[index].host = details?.host
+        }
+        // Publish only real changes, so an unchanged scan does not redraw the popover.
+        if newSessions != sessions { sessions = newSessions }
+        if result.runningBatchRuleIDs != runningBatchRuleIDs { runningBatchRuleIDs = result.runningBatchRuleIDs }
         if result.workingSessionCount > 0 { lastAgentWorkingAt = now }
         let graceActive = result.agentHolds.isEmpty && lastAgentWorkingAt.map {
             now.timeIntervalSince($0) <= graceSeconds
         } == true
 
-        decision = decidePower(PowerInputs(
+        let newDecision = decidePower(PowerInputs(
             restNow: restNow, pinnedUntil: pinnedUntil, keepScreenOn: keepScreenOn,
             agentHolds: result.agentHolds, processHolds: result.processHolds,
             workingCount: result.workingSessionCount, graceActive: graceActive, now: now
         ))
-        holdFailed = !controller.apply(decision)
+        if newDecision != decision { decision = newDecision }
+        let failed = !controller.apply(decision)
+        if failed != holdFailed { holdFailed = failed }
         recordLedger(held: controller.holdsSystem)
     }
 

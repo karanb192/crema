@@ -30,7 +30,7 @@ public struct RuleEngine {
             // Agent rules ignore GUI apps (e.g. Claude.app); batch rules may
             // legitimately watch an app, so only filter bundles for agents.
             let matched = processes.filter {
-                rule.matches($0) && !(rule.kind == .whileAgentWorking && $0.isInAppBundle)
+                rule.matches($0) && !(rule.kind == .whileAgentWorking && ($0.isInAppBundle || $0.isAgentHelper))
             }
             guard !matched.isEmpty else { continue }
 
@@ -66,7 +66,7 @@ public struct RuleEngine {
         var sessions: [AgentSession] = []
 
         for proc in processes {
-            guard !proc.isInAppBundle,
+            guard !proc.isInAppBundle, !proc.isAgentHelper,
                   let rule = agentPatterns.first(where: { $0.matches(proc) })
             else { continue }
             let preset = AgentPresets.preset(for: proc)
