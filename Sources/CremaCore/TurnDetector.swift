@@ -62,9 +62,14 @@ public final class TurnDetector {
     public func update(processes: [ScannedProcess],
                        now: Date = Date(),
                        lastWrite: ((ScannedProcess) -> Date?)? = nil) -> Set<pid_t> {
+        // Processes scanned without CPU counters (outside every watched
+        // tree) are not sampled at all. One that becomes watched later is
+        // then first seen with its full history, which must not read as a burst.
+        let present = processes
+        let processes = processes.filter(\.hasCPU)
         var working: Set<pid_t> = []
         var live: [pid_t: Sample] = [:]
-        let own = cpuSinceLastScan(processes)
+        let own = cpuSinceLastScan(processes, present: present)
         let subtree = Self.subtreeTotals(of: own.withReaped, processes: processes)
 
         for proc in processes {
@@ -121,9 +126,12 @@ public final class TurnDetector {
     /// that plus the growth in CPU of children it reaped. Deltas are per
     /// process, so a child that exits cannot cancel work elsewhere in the
     /// subtree.
-    private func cpuSinceLastScan(_ processes: [ScannedProcess])
+    /// `present` is every scanned process, CPU or not: one that left the
+    /// watched tree (an orphan reparented to launchd) is untracked, not gone,
+    /// so its CPU is not credited to an ancestor as if it had been reaped.
+    private func cpuSinceLastScan(_ processes: [ScannedProcess], present: [ScannedProcess])
         -> (selfOnly: [pid_t: UInt64], withReaped: [pid_t: UInt64]) {
-        let current = Dictionary(processes.map { ($0.pid, $0) }, uniquingKeysWith: { first, _ in first })
+        let current = Dictionary(present.map { ($0.pid, $0) }, uniquingKeysWith: { first, _ in first })
         func isLive(_ pid: pid_t, _ sample: Sample) -> Bool {
             current[pid]?.startTime == sample.startTime
         }

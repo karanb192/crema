@@ -10,6 +10,9 @@ struct CremaApp: App {
         MenuBarExtra {
             PopoverView()
                 .environmentObject(model)
+                // Here, not in PopoverView: the demo screenshot renders
+                // PopoverView with ImageRenderer, which cannot draw AppKit views.
+                .background(WindowTopPin())
         } label: {
             MenuBarLabel(model: model)
         }

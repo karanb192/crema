@@ -13,6 +13,14 @@ public struct AgentSession: Identifiable, Equatable {
     public let isWorking: Bool
     public let startedAt: Date
     public let lastActive: Date
+    /// Session name reported by the agent (a T3 Code thread title), if any.
+    public var title: String?
+    /// App that launched the session ("T3 Code"), if known.
+    public var host: String?
+    /// Agent account when not the default one ("personal"), if known.
+    public var account: String?
+    /// What the session is running right now ("xcodebuild running"), if known.
+    public var activity: String?
 
     public init(pid: pid_t, ppid: pid_t, ruleID: String, processName: String, displayName: String,
                 folder: String, isWorking: Bool, startedAt: Date, lastActive: Date) {
